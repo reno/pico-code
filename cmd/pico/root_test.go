@@ -21,6 +21,7 @@ func TestChatHelpListsEveryFlag(t *testing.T) {
 	wantFlags := []string{
 		"--provider", "--model", "--max-turns", "--token-budget",
 		"--workspace", "--yes", "--tools", "--stream", "--tui", "--log-level",
+		"--num-ctx",
 	}
 	for _, flag := range wantFlags {
 		if !strings.Contains(out, flag) {

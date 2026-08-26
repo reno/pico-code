@@ -24,6 +24,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 		stream      bool
 		tui         bool
 		logLevel    string
+		numCtx      int
 	}
 
 	cmd := &cobra.Command{
@@ -48,6 +49,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 				Stream:      flags.stream,
 				TUI:         flags.tui,
 				LogLevel:    flags.logLevel,
+				NumCtx:      flags.numCtx,
 			}, getenv)
 			if err != nil {
 				return fmt.Errorf("resolving config: %w", err)
@@ -68,6 +70,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 	f.BoolVar(&flags.stream, "stream", true, "stream provider responses")
 	f.BoolVar(&flags.tui, "tui", false, "use the bubbletea TUI instead of plain output")
 	f.StringVar(&flags.logLevel, "log-level", "info", "log level (debug|info|warn|error)")
+	f.IntVar(&flags.numCtx, "num-ctx", 4096, "context window size passed to Ollama's num_ctx (ignored by other providers)")
 
 	return cmd
 }

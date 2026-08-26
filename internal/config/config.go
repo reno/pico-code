@@ -47,6 +47,7 @@ type Flags struct {
 	Stream      bool
 	TUI         bool
 	LogLevel    string
+	NumCtx      int
 }
 
 // Config is the fully resolved, validated configuration for a chat session.
@@ -61,6 +62,11 @@ type Config struct {
 	Stream      bool
 	TUI         bool
 	LogLevel    string
+
+	// NumCtx is the Ollama adapter's context window size (num_ctx). Ollama
+	// silently truncates context if this is left unset, so it always has an
+	// explicit value rather than an optional one the adapter might omit.
+	NumCtx int
 
 	// AnthropicAPIKey and OllamaHost come from the environment only; there
 	// is no flag for either, since committing a secret to a shell history
@@ -97,6 +103,7 @@ func Load(f Flags, getenv func(string) string) (*Config, error) {
 		Stream:          f.Stream,
 		TUI:             f.TUI,
 		LogLevel:        f.LogLevel,
+		NumCtx:          f.NumCtx,
 		AnthropicAPIKey: getenv("ANTHROPIC_API_KEY"),
 		OllamaHost:      getenv("OLLAMA_HOST"),
 	}, nil
