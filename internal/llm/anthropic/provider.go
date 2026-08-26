@@ -38,10 +38,12 @@ func New(cfg *config.Config) (llm.Provider, error) {
 // Name identifies this provider in logs and config.
 func (p *Provider) Name() string { return "anthropic" }
 
-// Chat sends req and translates the response back to canonical form. Error
-// mapping and retries land in phase 2.2; this only wraps translation
-// failures and the SDK's own error with an "anthropic:" prefix so the loop
-// can tell which layer failed.
+// Chat sends req and translates the response back to canonical form.
+// Retries (429/5xx, exponential backoff with jitter, honoring Retry-After,
+// ctx-aware) happen inside client.Messages.New — the SDK's default
+// behavior, which already satisfies CLAUDE.md's retry requirement. What
+// Chat adds is mapError, translating a surfaced API error's status code
+// into a stable sentinel so the loop never needs to import this SDK.
 func (p *Provider) Chat(ctx context.Context, req llm.Request) (*llm.Response, error) {
 	params, err := toParams(req, p.model)
 	if err != nil {
@@ -49,7 +51,7 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request) (*llm.Response, er
 	}
 	msg, err := p.client.Messages.New(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("anthropic: %w", err)
+		return nil, mapError(err)
 	}
 	return fromResponse(msg)
 }
