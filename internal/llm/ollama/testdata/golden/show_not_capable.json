@@ -1,0 +1,12 @@
+{
+  "modelfile": "# generated fixture, not a real Modelfile",
+  "details": {
+    "family": "tinyllama",
+    "parameter_size": "1.1B",
+    "quantization_level": "Q4_K_M"
+  },
+  "model_info": {
+    "general.architecture": "llama"
+  },
+  "capabilities": ["completion"]
+}

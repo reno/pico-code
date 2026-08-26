@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/ollama/ollama/api"
 
@@ -32,6 +33,10 @@ type Provider struct {
 	baseURL    string
 	model      string
 	numCtx     int
+
+	toolSupportOnce sync.Once
+	toolSupport     bool
+	toolSupportErr  error
 }
 
 // New constructs a Provider from resolved config. It is registered under
@@ -62,6 +67,10 @@ func (p *Provider) Name() string { return "ollama" }
 // Chat sends req to /api/chat with streaming disabled and translates the
 // response back to canonical form.
 func (p *Provider) Chat(ctx context.Context, req llm.Request) (*llm.Response, error) {
+	if err := p.checkToolSupport(ctx, req); err != nil {
+		return nil, err
+	}
+
 	ar, err := toRequest(req, p.model, p.numCtx)
 	if err != nil {
 		return nil, fmt.Errorf("ollama: %w", err)
