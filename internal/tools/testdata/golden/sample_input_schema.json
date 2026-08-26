@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "max_depth": {
+      "description": "maximum recursion depth",
+      "type": "integer"
+    },
+    "path": {
+      "description": "path to the file, relative to the workspace root",
+      "type": "string"
+    },
+    "recursive": {
+      "description": "recurse into subdirectories",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "type": "object"
+}
