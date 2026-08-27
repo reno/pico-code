@@ -1,9 +1,5 @@
-// Package agent implements the core loop: call the provider, and if its
-// reply carries no tool calls, hand back the text; otherwise run every tool
-// call from that reply, feed the results back, and repeat. It owns policy
-// (CLAUDE.md layer ownership) — providers only translate wire formats and
-// tools only execute; the loop decides when to stop and how results get
-// reassembled.
+// Package agent implements the core loop: call the provider, run any tool
+// calls it returns, feed the results back, and repeat until it stops asking.
 package agent
 
 import (
@@ -21,22 +17,15 @@ import (
 	"github.com/reno/pico-code/internal/tools"
 )
 
-// Guards bundles the loop's stopping conditions beyond "the model stopped
-// asking for tools" — CLAUDE.md layer ownership: the agent loop owns policy
-// (max turns, token budget, timeouts, loop detection), not the provider or
-// tools. A zero value in any field means that guard is disabled. Repetition
-// detection has no field: CLAUDE.md fixes it at 3 identical consecutive
-// tool calls, not a per-session tuning knob.
+// Guards bounds how long a single Run can keep asking the provider for more
+// tool calls. A zero field disables that guard. Repetition detection has no
+// field: CLAUDE.md fixes it at 3 identical consecutive tool calls.
 type Guards struct {
-	MaxTurns    int           // provider.Chat calls allowed before stopping; 0 = unlimited.
-	TokenBudget int           // cumulative Usage tokens allowed before stopping; 0 = unlimited.
-	WallClock   time.Duration // elapsed time since Run started before stopping; 0 = unlimited.
+	MaxTurns    int
+	TokenBudget int
+	WallClock   time.Duration
 }
 
-// repetitionThreshold is CLAUDE.md's fixed number of identical consecutive
-// tool calls (same tool, same arguments, round over round) the loop
-// tolerates before breaking — small local models are documented to repeat a
-// call forever rather than give up.
 const repetitionThreshold = 3
 
 // Agent drives one conversation: a provider to talk to, a tool registry to
@@ -52,28 +41,17 @@ type Agent struct {
 }
 
 // New returns an Agent ready to run turns against provider, using registry
-// to execute any tool call it issues, appending to h. system and maxTokens
-// are sent on every Request the loop builds; guards bounds how long a
-// single Run can keep asking the provider for more tool calls. toolTimeout
-// bounds a single tool call (0 = unlimited) — separate from guards because
-// it never stops the loop, only that one call, per CLAUDE.md invariant 3
-// ("even when a tool ... times out" it still gets a ToolResult).
+// to execute any tool call it issues, appending to h. toolTimeout bounds a
+// single tool call (0 = unlimited).
 func New(provider llm.Provider, registry *tools.Registry, h *history.History, system string, maxTokens int, guards Guards, toolTimeout time.Duration) *Agent {
 	return &Agent{provider: provider, tools: registry, history: h, system: system, maxTokens: maxTokens, guards: guards, toolTimeout: toolTimeout}
 }
 
-// Run appends userInput to history as a user turn, then drives the
-// call-provider / run-tools cycle to completion: each round appends the
-// provider's reply to history, and if that reply has no ToolUse blocks,
-// Run returns its text. Otherwise every ToolUse in that reply runs
-// concurrently, the results are appended — in the original call order,
-// regardless of which tool finished first — as the next user message.
-//
-// After each such round, if a guard has tripped (see Guards), the loop
-// stops without making another provider call: it appends one final
-// assistant Text message explaining why and returns that text. The
-// triggering round's tool calls are always answered first, so history
-// stays valid (CLAUDE.md invariant 3) no matter which guard trips.
+// Run appends userInput to history, then drives the call-provider /
+// run-tools cycle until a reply has no ToolUse blocks (its text is
+// returned) or a guard trips (a final explanatory Text message is appended
+// and returned instead). Every round's tool calls are answered before
+// either exit, so history always satisfies CLAUDE.md invariant 3.
 func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 	a.history.Append(llm.Message{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: userInput}}})
 
@@ -114,9 +92,6 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 	}
 }
 
-// guardTripped reports whether any configured guard has been exceeded by
-// the round that just completed, and if so, the explanation to hand back to
-// the user (and the model, via history).
 func (a *Agent) guardTripped(turns, totalTokens int, elapsed time.Duration, repeatStreak int) (string, bool) {
 	switch {
 	case a.guards.MaxTurns > 0 && turns >= a.guards.MaxTurns:
@@ -132,17 +107,13 @@ func (a *Agent) guardTripped(turns, totalTokens int, elapsed time.Duration, repe
 	}
 }
 
-// stopWithExplanation appends reason as a final plain-text assistant
-// message — not a ToolUse, so it needs no ToolResult and closes out history
-// in a valid state — and returns it as Run's result.
 func (a *Agent) stopWithExplanation(reason string) string {
 	a.history.Append(llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.Text{Text: reason}}})
 	return reason
 }
 
 // runTools executes every call concurrently and returns their ToolResult
-// blocks in calls' original order — CLAUDE.md invariant 3 requires results
-// answer their ToolUse in call order, independent of completion order.
+// blocks in calls' original order, independent of completion order.
 func (a *Agent) runTools(ctx context.Context, calls []llm.ToolUse) []llm.Block {
 	results := make([]llm.Block, len(calls))
 	var g errgroup.Group
@@ -152,34 +123,20 @@ func (a *Agent) runTools(ctx context.Context, calls []llm.ToolUse) []llm.Block {
 			return nil
 		})
 	}
-	// Every goroutine above always returns nil: a tool failure becomes an
-	// IsError ToolResult (CLAUDE.md invariant 4, "tool failures are data,
-	// not control flow"), never a Go error that could short-circuit the
-	// group and leave a result slot empty.
 	_ = g.Wait()
 	return results
 }
 
-// toolOutcome carries a.tools.Run's result across the goroutine boundary in
-// runTool.
 type toolOutcome struct {
 	out string
 	err error
 }
 
-// runTool executes one call and always produces a ToolResult — CLAUDE.md
-// invariant 3 holds "even when a tool panics, times out, is denied by the
-// user, or the name is unknown": each becomes ToolResult{IsError: true}
-// rather than a missing result or a crashed process.
-//
-// The tool runs in its own goroutine so a badly-behaved implementation that
-// ignores ctx (a genuine hang, not just a slow one) can't block this call
-// past toolTimeout or the caller's cancellation: runTool answers from
-// whichever of "the tool finished" or "the deadline arrived" happens first,
-// abandoning the goroutine in the latter case rather than waiting on it —
-// it may still be running when runTool returns, but its buffered result
-// channel means it will exit on its own once it does finish, not leak
-// forever.
+// runTool always produces a ToolResult, even if the tool panics, times out,
+// or ctx is cancelled while it's running. The tool runs in its own
+// goroutine so a badly-behaved implementation that ignores ctx can't block
+// this call past toolTimeout or cancellation; if the deadline wins the race,
+// the goroutine is simply abandoned rather than waited on.
 func (a *Agent) runTool(ctx context.Context, call llm.ToolUse) llm.Block {
 	toolCtx := ctx
 	if a.toolTimeout > 0 {
@@ -210,11 +167,6 @@ func (a *Agent) runTool(ctx context.Context, call llm.ToolUse) llm.Block {
 	}
 }
 
-// callSignature builds a comparison key for a round's tool calls, in call
-// order, so two rounds count as "identical" (for repetition detection) only
-// when they call the same tools with the same arguments in the same order.
-// Input is JSON-compacted first so whitespace differences between two
-// otherwise-identical arguments don't defeat the comparison.
 func callSignature(calls []llm.ToolUse) string {
 	parts := make([]string, len(calls))
 	for i, c := range calls {
