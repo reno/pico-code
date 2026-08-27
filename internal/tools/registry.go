@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
+
+	"github.com/reno/pico-code/internal/llm"
 )
 
 // ErrToolNotFound is returned when a name has no registered Tool.
@@ -52,6 +55,24 @@ func (r *Registry) Get(name string) (Tool, error) {
 		return nil, fmt.Errorf("%w: %q", ErrToolNotFound, name)
 	}
 	return t, nil
+}
+
+// Definitions returns the canonical llm.ToolDefinition for every registered
+// tool, sorted by name so the request payload a caller builds from it is
+// deterministic across runs.
+func (r *Registry) Definitions() []llm.ToolDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	defs := make([]llm.ToolDefinition, 0, len(r.tools))
+	for _, t := range r.tools {
+		defs = append(defs, llm.ToolDefinition{
+			Name:        t.Name(),
+			Description: t.Description(),
+			InputSchema: t.Schema(),
+		})
+	}
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
+	return defs
 }
 
 // Run looks up name, validates input against its Schema(), and only then
