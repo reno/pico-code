@@ -35,19 +35,20 @@ const (
 // config.Load since they are credentials, not flags.
 func newChatCmd(getenv func(string) string) *cobra.Command {
 	var flags struct {
-		provider    string
-		model       string
-		maxTurns    int
-		tokenBudget int
-		workspace   string
-		yes         bool
-		tools       string
-		stream      bool
-		tui         bool
-		logLevel    string
-		numCtx      int
-		allowWrite  bool
-		session     string
+		provider      string
+		model         string
+		maxTurns      int
+		tokenBudget   int
+		workspace     string
+		yes           bool
+		tools         string
+		stream        bool
+		tui           bool
+		logLevel      string
+		numCtx        int
+		allowWrite    bool
+		session       string
+		allowCommands []string
 	}
 
 	cmd := &cobra.Command{
@@ -62,19 +63,20 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 			}
 
 			cfg, err := config.Load(config.Flags{
-				Provider:    provider,
-				Model:       flags.model,
-				MaxTurns:    flags.maxTurns,
-				TokenBudget: flags.tokenBudget,
-				Workspace:   flags.workspace,
-				Yes:         flags.yes,
-				Tools:       flags.tools,
-				Stream:      flags.stream,
-				TUI:         flags.tui,
-				LogLevel:    flags.logLevel,
-				NumCtx:      flags.numCtx,
-				AllowWrite:  flags.allowWrite,
-				Session:     flags.session,
+				Provider:      provider,
+				Model:         flags.model,
+				MaxTurns:      flags.maxTurns,
+				TokenBudget:   flags.tokenBudget,
+				Workspace:     flags.workspace,
+				Yes:           flags.yes,
+				Tools:         flags.tools,
+				Stream:        flags.stream,
+				TUI:           flags.tui,
+				LogLevel:      flags.logLevel,
+				NumCtx:        flags.numCtx,
+				AllowWrite:    flags.allowWrite,
+				Session:       flags.session,
+				AllowCommands: flags.allowCommands,
 			}, getenv)
 			if err != nil {
 				return fmt.Errorf("resolving config: %w", err)
@@ -98,6 +100,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 	f.IntVar(&flags.numCtx, "num-ctx", 4096, "context window size passed to Ollama's num_ctx (ignored by other providers)")
 	f.BoolVar(&flags.allowWrite, "allow-write", false, "register the write_file tool (off by default)")
 	f.StringVar(&flags.session, "session", "", "name a session to resume or start; saved after every turn")
+	f.StringSliceVar(&flags.allowCommands, "allow-commands", nil, "comma-separated binary allowlist for run_command; registers the tool only if non-empty")
 
 	return cmd
 }
@@ -179,10 +182,9 @@ func resolveProvider(cfg *config.Config, provider llm.Provider) (llm.Provider, e
 }
 
 // buildRegistry wires the built-in tools this session offers. run_command
-// is deliberately left out: CLAUDE.md requires it to have a binary
-// allowlist from config, and no config flag for one exists yet — a real
-// gap, not an oversight, worth a TASKS.md follow-up rather than a silent
-// empty allowlist that would make the tool present but useless.
+// is only registered when --allow-commands names at least one binary — an
+// empty allowlist would make the tool present but unconditionally useless,
+// worse than leaving it out.
 func buildRegistry(cfg *config.Config) (*tools.Registry, error) {
 	sandbox, err := tools.NewSandbox(cfg.Workspace, nil)
 	if err != nil {
@@ -210,6 +212,15 @@ func buildRegistry(cfg *config.Config) (*tools.Registry, error) {
 			return nil, err
 		}
 		if err := registry.Register(writeTool); err != nil {
+			return nil, err
+		}
+	}
+	if len(cfg.AllowCommands) > 0 {
+		runTool, err := tools.NewRunCommandTool(cfg.AllowCommands, defaultToolTimeout)
+		if err != nil {
+			return nil, err
+		}
+		if err := registry.Register(runTool); err != nil {
 			return nil, err
 		}
 	}

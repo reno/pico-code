@@ -90,6 +90,7 @@ for that turn (a log line says so), and it isn't available at all under
 | `--num-ctx`       | `4096`       | Ollama's context window (`num_ctx`); ignored by Anthropic       |
 | `--allow-write`   | `false`      | register the `write_file` tool                                 |
 | `--session`       | (none)       | name a session to resume or start; saved after every turn       |
+| `--allow-commands`| (none)       | comma-separated binary allowlist; registers `run_command` only if non-empty |
 
 `PICO_CODE_PROVIDER` is an environment fallback for `--provider`, checked
 only when the flag isn't explicitly set. `ANTHROPIC_API_KEY` and
@@ -124,13 +125,12 @@ turn.
 - Filesystem tools are confined to `--workspace`, resolved through
   `EvalSymlinks` so a symlink can't point a read or write outside it. Reads
   of `.env`, `.git/config`, `*.pem`, and `id_*` are denied outright.
-- `run_command` (implemented, not yet registered by the CLI — see
-  [Known limitations](#known-limitations)) only executes an allowlisted
-  binary directly (`exec.Command`, never a shell — no `|`, `&&`, `$()`, or
-  similar can do anything), with a timeout and truncated output.
-- `write_file` (and `run_command`, once it's wired in) needs approval
-  unless `--yes` is passed; the plain REPL prompts on the terminal, the TUI
-  shows a modal.
+- `run_command` (registered only when `--allow-commands` names at least one
+  binary) executes only that allowlisted binary, directly (`exec.Command`,
+  never a shell — no `|`, `&&`, `$()`, or similar can do anything), with a
+  timeout and truncated output.
+- `write_file` and `run_command` both need approval unless `--yes` is
+  passed; the plain REPL prompts on the terminal, the TUI shows a modal.
 - Tool output is truncated (head + tail, with an elision marker) before it
   ever reaches the model's context, so one large file can't blow the
   context window.
@@ -192,10 +192,9 @@ exist:
   failures go back to the model as an error result with the actual message,
   which is usually enough for a capable-but-small model to fix on retry.
 - **Some don't call tools at all — they narrate the call in prose.** That's
-  what the `--tools=prompted` fallback (schemas injected into the system
-  prompt, a fenced JSON block parsed back out of the reply) is for, though
-  see the limitation below: it isn't wired into the CLI yet, only proven at
-  the adapter level.
+  what `--tools=prompted` is for: schemas injected into the system prompt,
+  a fenced JSON block parsed back out of the reply instead of relying on
+  native tool-calling.
 - **Streaming exposed a real gap in `encoding/json`.** A JSON string chunk
   containing a truncated multi-byte UTF-8 sequence gets silently replaced
   with U+FFFD by Go's own decoder — which mattered for testing "a tool
@@ -214,10 +213,6 @@ taught this codebase to be defensive.
 Written down here rather than left silent, since a few flags and features
 described above are further along in the library than in the CLI wiring:
 
-- **`run_command` isn't registered at all.** It needs a binary allowlist,
-  and `config` has no flag to supply one yet, so wiring it in with an empty
-  allowlist would make it present but unconditionally useless — worse than
-  just leaving it out until there's a real flag for it.
 - **The TUI doesn't parse slash commands.** `/usage`, `/new`, `/save`,
   `/load` only exist in the plain REPL; `--session` auto-save/resume works
   in both.

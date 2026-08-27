@@ -294,3 +294,23 @@ func TestResolveProviderRejectsTUIWithPromptedTools(t *testing.T) {
 		t.Errorf("resolveProvider() error = %q, want it to name both --tui and --tools=prompted", err)
 	}
 }
+
+func TestBuildRegistryRegistersRunCommandOnlyWhenAllowlisted(t *testing.T) {
+	dir := t.TempDir()
+
+	withCommands, err := buildRegistry(&config.Config{Workspace: dir, AllowCommands: []string{"echo"}})
+	if err != nil {
+		t.Fatalf("buildRegistry() error = %v", err)
+	}
+	if _, err := withCommands.Get("run_command"); err != nil {
+		t.Errorf("Get(\"run_command\") error = %v, want it registered when --allow-commands is non-empty", err)
+	}
+
+	without, err := buildRegistry(&config.Config{Workspace: dir})
+	if err != nil {
+		t.Fatalf("buildRegistry() error = %v", err)
+	}
+	if _, err := without.Get("run_command"); !errors.Is(err, tools.ErrToolNotFound) {
+		t.Errorf("Get(\"run_command\") error = %v, want ErrToolNotFound when --allow-commands is empty", err)
+	}
+}

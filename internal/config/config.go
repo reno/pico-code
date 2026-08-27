@@ -52,19 +52,20 @@ var ErrUnknownLogLevel = errors.New("unknown log level")
 // already resolved against any environment fallback (e.g. PICO_CODE_PROVIDER)
 // by the caller. Load only validates and fills in credentials.
 type Flags struct {
-	Provider    string
-	Model       string
-	MaxTurns    int
-	TokenBudget int
-	Workspace   string
-	Yes         bool
-	Tools       string
-	Stream      bool
-	TUI         bool
-	LogLevel    string
-	NumCtx      int
-	AllowWrite  bool
-	Session     string
+	Provider      string
+	Model         string
+	MaxTurns      int
+	TokenBudget   int
+	Workspace     string
+	Yes           bool
+	Tools         string
+	Stream        bool
+	TUI           bool
+	LogLevel      string
+	NumCtx        int
+	AllowWrite    bool
+	Session       string
+	AllowCommands []string
 }
 
 // Config is the fully resolved, validated configuration for a chat session.
@@ -92,6 +93,11 @@ type Config struct {
 	// Session names a session to resume (if it already exists) or start
 	// (if it doesn't); empty means no session persistence.
 	Session string
+
+	// AllowCommands is the binary allowlist run_command is registered
+	// with; empty means the tool isn't registered at all, since an empty
+	// allowlist would make it present but unconditionally useless.
+	AllowCommands []string
 
 	// AnthropicAPIKey and OllamaHost come from the environment only; there
 	// is no flag for either, since committing a secret to a shell history
@@ -138,6 +144,7 @@ func Load(f Flags, getenv func(string) string) (*Config, error) {
 		NumCtx:          f.NumCtx,
 		AllowWrite:      f.AllowWrite,
 		Session:         f.Session,
+		AllowCommands:   f.AllowCommands,
 		AnthropicAPIKey: getenv("ANTHROPIC_API_KEY"),
 		OllamaHost:      getenv("OLLAMA_HOST"),
 	}, nil
