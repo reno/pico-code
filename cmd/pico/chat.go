@@ -3,8 +3,10 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/reno/pico-code/internal/config"
 	"github.com/reno/pico-code/internal/history"
 	"github.com/reno/pico-code/internal/llm"
+	"github.com/reno/pico-code/internal/llm/prompted"
 	"github.com/reno/pico-code/internal/tools"
 	"github.com/reno/pico-code/internal/ui"
 )
@@ -110,6 +113,10 @@ var runChat = func(cmd *cobra.Command, cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("resolving provider: %w", err)
 	}
+	provider, err = resolveProvider(cfg, provider)
+	if err != nil {
+		return err
+	}
 
 	registry, err := buildRegistry(cfg)
 	if err != nil {
@@ -153,6 +160,22 @@ func compactionPolicy(cfg *config.Config) agent.CompactionPolicy {
 		window = cfg.NumCtx
 	}
 	return agent.CompactionPolicy{ContextWindow: window, TriggerFraction: compactionTriggerFraction, KeepTurns: compactionKeepTurns}
+}
+
+// resolveProvider wraps provider with prompted-tools support when cfg.Tools
+// asks for it, rejecting that combined with --tui: the TUI always drives
+// the agent through RunStream, and prompted.Provider.Stream always errors
+// (it needs the full reply before it can look for a fenced tool call), so
+// the combination would fail confusingly on the very first turn instead of
+// with a clear message at startup.
+func resolveProvider(cfg *config.Config, provider llm.Provider) (llm.Provider, error) {
+	if cfg.Tools != config.ToolsPrompted {
+		return provider, nil
+	}
+	if cfg.TUI {
+		return nil, errors.New("--tui does not support --tools=prompted: the TUI requires streaming, and prompted mode can't stream")
+	}
+	return prompted.Wrap(provider), nil
 }
 
 // buildRegistry wires the built-in tools this session offers. run_command
@@ -203,9 +226,11 @@ func runPlainChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider,
 	}
 	ag := agent.New(provider, registry, h, systemPrompt, defaultMaxTokens, guards, defaultToolTimeout, approver)
 	ag.SetCompactionPolicy(compactionPolicy(cfg))
-	renderer := ui.PlainRenderer{Out: cmd.OutOrStdout()}
+	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
 	in := cmd.InOrStdin()
+
+	runTurn := newTurnRunner(cfg, ag, out)
 
 	if !isInteractive(in) {
 		data, err := io.ReadAll(in)
@@ -216,21 +241,49 @@ func runPlainChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider,
 		if input == "" {
 			return nil
 		}
-		if _, err := ag.RunStream(ctx, input, renderer); err != nil {
+		if err := runTurn(ctx, input); err != nil {
 			return err
 		}
 		return sess.saveIfActive(h)
 	}
 
-	return runREPL(ctx, in, cmd.OutOrStdout(), ag, h, sess, renderer)
+	return runREPL(ctx, in, out, ag, h, sess, runTurn)
+}
+
+// newTurnRunner picks Run or RunStream per cfg.Stream, printing Run's
+// final text itself since PlainRenderer only ever sees a stream.
+// tools=prompted forces non-streaming regardless of --stream: the
+// prompted.Provider decorator needs a full reply before it can look for a
+// fenced tool call, so its Stream always errors.
+func newTurnRunner(cfg *config.Config, ag *agent.Agent, out io.Writer) func(context.Context, string) error {
+	stream := cfg.Stream
+	if cfg.Tools == config.ToolsPrompted && cfg.Stream {
+		slog.Info("chat: streaming disabled", "reason", "tools=prompted can't stream")
+		stream = false
+	}
+	if !stream {
+		return func(ctx context.Context, input string) error {
+			text, err := ag.Run(ctx, input)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(out, text)
+			return err
+		}
+	}
+	renderer := ui.PlainRenderer{Out: out}
+	return func(ctx context.Context, input string) error {
+		_, err := ag.RunStream(ctx, input, renderer)
+		return err
+	}
 }
 
 // runREPL reads one line at a time from in, dispatching a leading slash
-// command to handleCommand and everything else to ag.RunStream (saving to
+// command to handleCommand and everything else to runTurn (saving to
 // sess's file afterward, if one is active), until in hits EOF or ctx is
 // cancelled. Split out from runPlainChat so a test can drive it directly
 // without needing a real terminal for isInteractive.
-func runREPL(ctx context.Context, in io.Reader, out io.Writer, ag *agent.Agent, h *history.History, sess *session, renderer ui.Renderer) error {
+func runREPL(ctx context.Context, in io.Reader, out io.Writer, ag *agent.Agent, h *history.History, sess *session, runTurn func(context.Context, string) error) error {
 	prompt := func() { _, _ = fmt.Fprint(out, "> ") }
 
 	scanner := bufio.NewScanner(in)
@@ -248,7 +301,7 @@ func runREPL(ctx context.Context, in io.Reader, out io.Writer, ag *agent.Agent, 
 			prompt()
 			continue
 		}
-		if _, err := ag.RunStream(ctx, line, renderer); err != nil {
+		if err := runTurn(ctx, line); err != nil {
 			return err
 		}
 		if ctx.Err() != nil {

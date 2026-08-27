@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,20 +17,30 @@ import (
 	"github.com/reno/pico-code/internal/history"
 	"github.com/reno/pico-code/internal/llm"
 	"github.com/reno/pico-code/internal/tools"
-	"github.com/reno/pico-code/internal/ui"
 )
 
 // fakeChatProvider returns one canned reply, enough to drive
 // runPlainChat's single-shot piped-input path without a real backend.
-type fakeChatProvider struct{ reply string }
+// disallowStream, when set, makes Stream fail instead of succeed — used to
+// prove a --stream=false turn never calls it at all.
+type fakeChatProvider struct {
+	reply          string
+	disallowStream bool
+}
 
 func (f *fakeChatProvider) Name() string { return "fake" }
 
 func (f *fakeChatProvider) Chat(context.Context, llm.Request) (*llm.Response, error) {
-	return nil, nil
+	return &llm.Response{
+		Message:    llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.Text{Text: f.reply}}},
+		StopReason: "end_turn",
+	}, nil
 }
 
 func (f *fakeChatProvider) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+	if f.disallowStream {
+		return nil, errors.New("fakeChatProvider: Stream must not be called when streaming is disabled")
+	}
 	return llm.StreamEvents(ctx, func(send func(llm.Event) bool) {
 		if !send(llm.TextDelta{Text: f.reply}) {
 			return
@@ -47,7 +58,7 @@ func TestPipedChatProducesCleanANSIFreeOutput(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 
-	cfg := &config.Config{Yes: true}
+	cfg := &config.Config{Yes: true, Stream: true}
 	provider := &fakeChatProvider{reply: "hello there"}
 	h := history.New()
 
@@ -74,11 +85,11 @@ func TestUsageCommandReportsCumulativeAcrossTurns(t *testing.T) {
 	provider := &fakeChatProvider{reply: "ok"}
 	h := history.New()
 	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
-	renderer := ui.PlainRenderer{Out: io.Discard}
 
 	var out bytes.Buffer
 	in := strings.NewReader("hello\n/usage\n")
-	if err := runREPL(context.Background(), in, &out, ag, h, noSession(t), renderer); err != nil {
+	runTurn := newTurnRunner(&config.Config{Stream: true}, ag, &out)
+	if err := runREPL(context.Background(), in, &out, ag, h, noSession(t), runTurn); err != nil {
 		t.Fatalf("runREPL() error = %v", err)
 	}
 
@@ -133,8 +144,8 @@ func TestSessionAutoSavesAfterEachTurnAndResumes(t *testing.T) {
 	}
 	provider := &fakeChatProvider{reply: "first reply"}
 	ag1 := agent.New(provider, tools.NewRegistry(), h1, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
-	renderer := ui.PlainRenderer{Out: io.Discard}
-	if err := runREPL(context.Background(), strings.NewReader("first message\n"), io.Discard, ag1, h1, sess1, renderer); err != nil {
+	runTurn1 := newTurnRunner(&config.Config{Stream: true}, ag1, io.Discard)
+	if err := runREPL(context.Background(), strings.NewReader("first message\n"), io.Discard, ag1, h1, sess1, runTurn1); err != nil {
 		t.Fatalf("runREPL() (process 1) error = %v", err)
 	}
 
@@ -166,11 +177,11 @@ func TestSessionCommandsNewSaveLoad(t *testing.T) {
 	h := history.New()
 	provider := &fakeChatProvider{reply: "reply"}
 	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
-	renderer := ui.PlainRenderer{Out: io.Discard}
 
 	var out bytes.Buffer
 	in := strings.NewReader("hello there\n/save first\n/new\n/load first\n")
-	if err := runREPL(context.Background(), in, &out, ag, h, sess, renderer); err != nil {
+	runTurn := newTurnRunner(&config.Config{Stream: true}, ag, &out)
+	if err := runREPL(context.Background(), in, &out, ag, h, sess, runTurn); err != nil {
 		t.Fatalf("runREPL() error = %v", err)
 	}
 
@@ -204,5 +215,82 @@ func TestSessionLoadOfCorruptFileIsReadableErrorNotPanic(t *testing.T) {
 	}
 	if _, err := sess.loadOrCreateHistory(); err == nil {
 		t.Fatal("loadOrCreateHistory() = nil error, want a readable error for a corrupt session file")
+	}
+}
+
+// TestStreamFalseUsesNonStreamingPath proves --stream=false actually has
+// an effect: the fake provider's Stream errors, so a passing turn here
+// means newTurnRunner drove it through Chat/ag.Run instead.
+func TestStreamFalseUsesNonStreamingPath(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetIn(strings.NewReader("hi\n"))
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	cfg := &config.Config{Yes: true, Stream: false}
+	provider := &fakeChatProvider{reply: "non-streamed reply", disallowStream: true}
+	h := history.New()
+
+	if err := runPlainChat(cmd, cfg, provider, tools.NewRegistry(), h, agent.Guards{}, noSession(t)); err != nil {
+		t.Fatalf("runPlainChat() error = %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "non-streamed reply") {
+		t.Errorf("output = %q, want it to contain the reply", got)
+	}
+}
+
+// TestStreamTrueWithPromptedToolsFallsBackToNonStreaming is the other half
+// of newTurnRunner's --tools=prompted handling: even with --stream=true,
+// prompted mode can't stream, so the turn must still go through Chat.
+func TestStreamTrueWithPromptedToolsFallsBackToNonStreaming(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetIn(strings.NewReader("hi\n"))
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	cfg := &config.Config{Yes: true, Stream: true, Tools: config.ToolsPrompted}
+	provider := &fakeChatProvider{reply: "fallback reply", disallowStream: true}
+	h := history.New()
+
+	if err := runPlainChat(cmd, cfg, provider, tools.NewRegistry(), h, agent.Guards{}, noSession(t)); err != nil {
+		t.Fatalf("runPlainChat() error = %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "fallback reply") {
+		t.Errorf("output = %q, want it to contain the reply", got)
+	}
+}
+
+func TestResolveProviderWrapsForPromptedTools(t *testing.T) {
+	provider := &fakeChatProvider{reply: "unused"}
+	got, err := resolveProvider(&config.Config{Tools: config.ToolsPrompted}, provider)
+	if err != nil {
+		t.Fatalf("resolveProvider() error = %v", err)
+	}
+	if got == llm.Provider(provider) {
+		t.Error("resolveProvider() returned the provider unwrapped, want it wrapped for prompted-tools mode")
+	}
+}
+
+func TestResolveProviderLeavesNativeToolsUnwrapped(t *testing.T) {
+	provider := &fakeChatProvider{reply: "unused"}
+	got, err := resolveProvider(&config.Config{Tools: config.ToolsNative}, provider)
+	if err != nil {
+		t.Fatalf("resolveProvider() error = %v", err)
+	}
+	if got != llm.Provider(provider) {
+		t.Error("resolveProvider() should return native-mode providers unwrapped")
+	}
+}
+
+func TestResolveProviderRejectsTUIWithPromptedTools(t *testing.T) {
+	provider := &fakeChatProvider{reply: "unused"}
+	_, err := resolveProvider(&config.Config{Tools: config.ToolsPrompted, TUI: true}, provider)
+	if err == nil {
+		t.Fatal("resolveProvider() error = nil, want an error for --tui with --tools=prompted")
+	}
+	if !strings.Contains(err.Error(), "tui") || !strings.Contains(err.Error(), "prompted") {
+		t.Errorf("resolveProvider() error = %q, want it to name both --tui and --tools=prompted", err)
 	}
 }

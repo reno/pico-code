@@ -66,9 +66,12 @@ effective value at startup.
 
 Not every local model supports native tool calling. pico code probes
 `/api/show` once per process and fails fast with a message pointing at
-`--tools=prompted` if the model doesn't advertise tool support — though see
-[Known limitations](#known-limitations) below, since that flag isn't wired
-into the CLI yet.
+`--tools=prompted` if the model doesn't advertise tool support.
+`--tools=prompted` injects tool schemas into the system prompt and parses a
+fenced JSON block back out of the reply instead of relying on the model's
+native tool-calling — it can't stream, so it also forces `--stream=false`
+for that turn (a log line says so), and it isn't available at all under
+`--tui`, which always streams.
 
 ## Flags
 
@@ -80,8 +83,8 @@ into the CLI yet.
 | `--token-budget`  | `100000`     | cumulative tokens before it stops on its own                   |
 | `--workspace`     | `.`          | root directory filesystem tools are confined to                |
 | `--yes`           | `false`      | skip interactive approval prompts                              |
-| `--tools`         | `native`     | `native` or `prompted` (see [Known limitations](#known-limitations)) |
-| `--stream`        | `true`       | see [Known limitations](#known-limitations)                    |
+| `--tools`         | `native`     | `native` or `prompted`; prompted mode ignores `--tui` and forces non-streaming |
+| `--stream`        | `true`       | stream a reply as it arrives, plain mode only (the TUI always streams) |
 | `--tui`           | `false`      | bubbletea TUI instead of the plain read-eval-print loop         |
 | `--log-level`     | `info`       | `debug`, `info`, `warn`, or `error`                            |
 | `--num-ctx`       | `4096`       | Ollama's context window (`num_ctx`); ignored by Anthropic       |
@@ -211,14 +214,6 @@ taught this codebase to be defensive.
 Written down here rather than left silent, since a few flags and features
 described above are further along in the library than in the CLI wiring:
 
-- **`--tools=prompted` isn't read by `cmd/pico`.** The fallback itself
-  (`internal/llm/prompted`) is implemented and tested against six
-  malformed-output cases, but nothing in `cmd/pico` currently wraps a
-  provider with it — `--tools` is parsed and validated but has no effect
-  yet.
-- **`--stream` isn't read by `cmd/pico` either.** The agent loop supports
-  both `Run` (non-streaming) and `RunStream`; the CLI always calls
-  `RunStream`. Turning `--stream=false` off currently does nothing.
 - **`run_command` isn't registered at all.** It needs a binary allowlist,
   and `config` has no flag to supply one yet, so wiring it in with an empty
   allowlist would make it present but unconditionally useless — worse than
