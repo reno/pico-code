@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -111,9 +110,4 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request) (*llm.Response, er
 	}
 
 	return fromResponse(&chatResp)
-}
-
-// Stream is implemented in phase 6.3.
-func (p *Provider) Stream(_ context.Context, _ llm.Request) (<-chan llm.Event, error) {
-	return nil, errors.New("ollama: streaming not implemented until phase 6.3")
 }
