@@ -42,6 +42,7 @@ type Agent struct {
 	approver    Approver
 
 	turnUsages []llm.Usage
+	compaction CompactionPolicy
 }
 
 // New returns an Agent ready to run turns against provider, using registry
@@ -58,6 +59,7 @@ func New(provider llm.Provider, registry *tools.Registry, h *history.History, sy
 // and returned instead). Every round's tool calls are answered before
 // either exit, so history always satisfies CLAUDE.md invariant 3.
 func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
+	a.maybeCompact(ctx)
 	a.history.Append(llm.Message{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: userInput}}})
 
 	rs := &roundState{start: time.Now()}
@@ -79,6 +81,7 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 // start and outcome — a step Render alone can't see, since running a tool
 // happens after a round's events finish, not during them.
 func (a *Agent) RunStream(ctx context.Context, userInput string, renderer ui.Renderer) (string, error) {
+	a.maybeCompact(ctx)
 	a.history.Append(llm.Message{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: userInput}}})
 
 	reporter, _ := renderer.(ui.ToolStatusReporter)

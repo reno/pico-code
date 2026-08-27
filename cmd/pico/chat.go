@@ -113,9 +113,27 @@ var runChat = func(cmd *cobra.Command, cfg *config.Config) error {
 	guards := agent.Guards{MaxTurns: cfg.MaxTurns, TokenBudget: cfg.TokenBudget}
 
 	if cfg.TUI {
-		return runTUIChat(cmd, provider, registry, h, guards)
+		return runTUIChat(cmd, cfg, provider, registry, h, guards)
 	}
 	return runPlainChat(cmd, cfg, provider, registry, h, guards)
+}
+
+// defaultAnthropicContextWindow is a conservative stand-in for the real
+// per-model context window: config has no field for it (only Ollama's
+// NumCtx, since CLAUDE.md requires that one explicitly), so compaction
+// against Anthropic uses this constant rather than an actual model limit.
+const (
+	defaultAnthropicContextWindow = 200_000
+	compactionTriggerFraction     = 0.75
+	compactionKeepTurns           = 6
+)
+
+func compactionPolicy(cfg *config.Config) agent.CompactionPolicy {
+	window := defaultAnthropicContextWindow
+	if cfg.Provider == config.ProviderOllama {
+		window = cfg.NumCtx
+	}
+	return agent.CompactionPolicy{ContextWindow: window, TriggerFraction: compactionTriggerFraction, KeepTurns: compactionKeepTurns}
 }
 
 // buildRegistry wires the built-in tools this session offers. run_command
@@ -165,6 +183,7 @@ func runPlainChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider,
 		approver = agent.ConsoleApprover{In: cmd.InOrStdin(), Out: cmd.OutOrStdout()}
 	}
 	ag := agent.New(provider, registry, h, systemPrompt, defaultMaxTokens, guards, defaultToolTimeout, approver)
+	ag.SetCompactionPolicy(compactionPolicy(cfg))
 	renderer := ui.PlainRenderer{Out: cmd.OutOrStdout()}
 	ctx := cmd.Context()
 	in := cmd.InOrStdin()
@@ -236,7 +255,7 @@ func isInteractive(in io.Reader) bool {
 // goroutine reads submitted input and calls RunStream, sending its
 // progress and result back into the program as messages, while
 // program.Run() owns the terminal until Ctrl+D quits it.
-func runTUIChat(cmd *cobra.Command, provider llm.Provider, registry *tools.Registry, h *history.History, guards agent.Guards) error {
+func runTUIChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, registry *tools.Registry, h *history.History, guards agent.Guards) error {
 	ctx := cmd.Context()
 	submit := make(chan string, 1)
 	program := tea.NewProgram(ui.NewModel(submit), tea.WithAltScreen(), tea.WithContext(ctx))
@@ -244,6 +263,7 @@ func runTUIChat(cmd *cobra.Command, provider llm.Provider, registry *tools.Regis
 	renderer := &ui.TUIRenderer{Program: program}
 	approver := &ui.TUIApprover{Program: program}
 	ag := agent.New(provider, registry, h, systemPrompt, defaultMaxTokens, guards, defaultToolTimeout, approver)
+	ag.SetCompactionPolicy(compactionPolicy(cfg))
 
 	go func() {
 		for input := range submit {
