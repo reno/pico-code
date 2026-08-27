@@ -15,6 +15,7 @@ import (
 	"github.com/reno/pico-code/internal/history"
 	"github.com/reno/pico-code/internal/llm"
 	"github.com/reno/pico-code/internal/tools"
+	"github.com/reno/pico-code/internal/ui"
 )
 
 // Guards bounds how long a single Run can keep asking the provider for more
@@ -57,41 +58,87 @@ func New(provider llm.Provider, registry *tools.Registry, h *history.History, sy
 func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 	a.history.Append(llm.Message{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: userInput}}})
 
-	start := time.Now()
-	var turns, totalTokens, repeatStreak int
-	var lastSignature string
-
+	rs := &roundState{start: time.Now()}
 	for {
-		resp, err := a.provider.Chat(ctx, llm.Request{
-			System:    a.system,
-			Messages:  a.history.Snapshot(),
-			Tools:     a.tools.Definitions(),
-			MaxTokens: a.maxTokens,
-		})
+		resp, err := a.provider.Chat(ctx, a.request())
 		if err != nil {
 			return "", fmt.Errorf("agent: chat: %w", err)
 		}
-		turns++
-		totalTokens += resp.Usage.InputTokens + resp.Usage.OutputTokens
-		a.history.Append(resp.Message)
-
-		calls := toolUseBlocks(resp.Message)
-		if len(calls) == 0 {
-			return textOf(resp.Message), nil
-		}
-
-		if sig := callSignature(calls); sig == lastSignature {
-			repeatStreak++
-		} else {
-			lastSignature, repeatStreak = sig, 1
-		}
-
-		a.history.Append(llm.Message{Role: llm.RoleUser, Blocks: a.runTools(ctx, calls)})
-
-		if reason, tripped := a.guardTripped(turns, totalTokens, time.Since(start), repeatStreak); tripped {
-			return a.stopWithExplanation(reason), nil
+		if text, done := a.runRound(ctx, resp, rs, nil); done {
+			return text, nil
 		}
 	}
+}
+
+// RunStream behaves like Run but drives each round's provider call through
+// Stream instead of Chat, handing the raw event channel to renderer so it
+// can display text as it arrives. If renderer also implements
+// ui.ToolStatusReporter, it additionally learns about each tool call's
+// start and outcome — a step Render alone can't see, since running a tool
+// happens after a round's events finish, not during them.
+func (a *Agent) RunStream(ctx context.Context, userInput string, renderer ui.Renderer) (string, error) {
+	a.history.Append(llm.Message{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: userInput}}})
+
+	reporter, _ := renderer.(ui.ToolStatusReporter)
+	rs := &roundState{start: time.Now()}
+	for {
+		ch, err := a.provider.Stream(ctx, a.request())
+		if err != nil {
+			return "", fmt.Errorf("agent: stream: %w", err)
+		}
+		resp, err := renderer.Render(ctx, ch)
+		if err != nil {
+			return "", fmt.Errorf("agent: render: %w", err)
+		}
+		if text, done := a.runRound(ctx, resp, rs, reporter); done {
+			return text, nil
+		}
+	}
+}
+
+func (a *Agent) request() llm.Request {
+	return llm.Request{
+		System:    a.system,
+		Messages:  a.history.Snapshot(),
+		Tools:     a.tools.Definitions(),
+		MaxTokens: a.maxTokens,
+	}
+}
+
+// roundState carries the bookkeeping Run and RunStream both accumulate
+// across rounds of the same turn.
+type roundState struct {
+	start              time.Time
+	turns, totalTokens int
+	repeatStreak       int
+	lastSignature      string
+}
+
+// runRound appends resp to history, runs any tool calls it contains, and
+// reports whether the turn is over — either because resp had no tool calls
+// or because a guard tripped — along with the text to return in that case.
+func (a *Agent) runRound(ctx context.Context, resp *llm.Response, rs *roundState, reporter ui.ToolStatusReporter) (string, bool) {
+	rs.turns++
+	rs.totalTokens += resp.Usage.InputTokens + resp.Usage.OutputTokens
+	a.history.Append(resp.Message)
+
+	calls := toolUseBlocks(resp.Message)
+	if len(calls) == 0 {
+		return textOf(resp.Message), true
+	}
+
+	if sig := callSignature(calls); sig == rs.lastSignature {
+		rs.repeatStreak++
+	} else {
+		rs.lastSignature, rs.repeatStreak = sig, 1
+	}
+
+	a.history.Append(llm.Message{Role: llm.RoleUser, Blocks: a.runTools(ctx, calls, reporter)})
+
+	if reason, tripped := a.guardTripped(rs.turns, rs.totalTokens, time.Since(rs.start), rs.repeatStreak); tripped {
+		return a.stopWithExplanation(reason), true
+	}
+	return "", false
 }
 
 func (a *Agent) guardTripped(turns, totalTokens int, elapsed time.Duration, repeatStreak int) (string, bool) {
@@ -116,12 +163,12 @@ func (a *Agent) stopWithExplanation(reason string) string {
 
 // runTools executes every call concurrently and returns their ToolResult
 // blocks in calls' original order, independent of completion order.
-func (a *Agent) runTools(ctx context.Context, calls []llm.ToolUse) []llm.Block {
+func (a *Agent) runTools(ctx context.Context, calls []llm.ToolUse, reporter ui.ToolStatusReporter) []llm.Block {
 	results := make([]llm.Block, len(calls))
 	var g errgroup.Group
 	for i, call := range calls {
 		g.Go(func() error {
-			results[i] = a.runTool(ctx, call)
+			results[i] = a.runTool(ctx, call, reporter)
 			return nil
 		})
 	}
@@ -139,11 +186,23 @@ type toolOutcome struct {
 // goroutine so a badly-behaved implementation that ignores ctx can't block
 // this call past toolTimeout or cancellation; if the deadline wins the race,
 // the goroutine is simply abandoned rather than waited on.
-func (a *Agent) runTool(ctx context.Context, call llm.ToolUse) llm.Block {
+func (a *Agent) runTool(ctx context.Context, call llm.ToolUse, reporter ui.ToolStatusReporter) llm.Block {
 	if result, denied := a.checkApproval(ctx, call); denied {
 		return result
 	}
 
+	if reporter != nil {
+		reporter.ToolStarted(call.ID, call.Name, call.Input)
+	}
+	result := a.doRunTool(ctx, call)
+	if reporter != nil {
+		tr := result.(llm.ToolResult)
+		reporter.ToolFinished(call.ID, call.Name, tr.Content, tr.IsError)
+	}
+	return result
+}
+
+func (a *Agent) doRunTool(ctx context.Context, call llm.ToolUse) llm.Block {
 	toolCtx := ctx
 	if a.toolTimeout > 0 {
 		var cancel context.CancelFunc

@@ -1,0 +1,134 @@
+package ui
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/reno/pico-code/internal/llm"
+)
+
+func send(ch chan llm.Event, events ...llm.Event) {
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+}
+
+// TestPlainRendererWritesTextAsItStreamsWithNoANSI is 7.1's AC: piped
+// output is clean and ANSI-free.
+func TestPlainRendererWritesTextAsItStreamsWithNoANSI(t *testing.T) {
+	ch := make(chan llm.Event)
+	go send(ch,
+		llm.TextDelta{Text: "hel"},
+		llm.TextDelta{Text: "lo"},
+		llm.MessageDone{StopReason: "end_turn", Usage: llm.Usage{InputTokens: 3, OutputTokens: 2}},
+	)
+
+	var buf bytes.Buffer
+	resp, err := (PlainRenderer{Out: &buf}).Render(context.Background(), ch)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+
+	if got := buf.String(); got != "hello\n" {
+		t.Errorf("Out = %q, want %q", got, "hello\n")
+	}
+	if strings.ContainsRune(buf.String(), '\x1b') {
+		t.Errorf("Out contains an ANSI escape byte: %q", buf.String())
+	}
+
+	want := &llm.Response{
+		Message:    llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.Text{Text: "hello"}}},
+		StopReason: "end_turn",
+		Usage:      llm.Usage{InputTokens: 3, OutputTokens: 2},
+	}
+	if diff := cmp.Diff(want, resp); diff != "" {
+		t.Errorf("Response mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestPlainRendererReconstructsToolUseBlock(t *testing.T) {
+	ch := make(chan llm.Event)
+	go send(ch,
+		llm.TextDelta{Text: "checking"},
+		llm.ToolUseStart{ID: "t1", Name: "get_weather"},
+		llm.ToolUseArgsDelta{ID: "t1", Partial: `{"location"`},
+		llm.ToolUseArgsDelta{ID: "t1", Partial: `:"Paris"}`},
+		llm.ToolUseDone{ID: "t1", Input: json.RawMessage(`{"location":"Paris"}`)},
+		llm.MessageDone{StopReason: "tool_use"},
+	)
+
+	var buf bytes.Buffer
+	resp, err := (PlainRenderer{Out: &buf}).Render(context.Background(), ch)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+
+	want := []llm.Block{
+		llm.Text{Text: "checking"},
+		llm.ToolUse{ID: "t1", Name: "get_weather", Input: json.RawMessage(`{"location":"Paris"}`)},
+	}
+	if diff := cmp.Diff(want, resp.Message.Blocks); diff != "" {
+		t.Errorf("Blocks mismatch (-want +got):\n%s", diff)
+	}
+	if got := buf.String(); got != "checking\n" {
+		t.Errorf("Out = %q, want %q", got, "checking\n")
+	}
+}
+
+func TestPlainRendererPropagatesErrorEvent(t *testing.T) {
+	wantErr := errors.New("boom")
+	ch := make(chan llm.Event)
+	go send(ch, llm.Error{Err: wantErr})
+
+	_, err := (PlainRenderer{Out: &bytes.Buffer{}}).Render(context.Background(), ch)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Render() error = %v, want it to wrap %v", err, wantErr)
+	}
+}
+
+func TestPlainRendererErrorsIfChannelClosesWithoutMessageDone(t *testing.T) {
+	ch := make(chan llm.Event)
+	go send(ch, llm.TextDelta{Text: "hi"})
+
+	_, err := (PlainRenderer{Out: &bytes.Buffer{}}).Render(context.Background(), ch)
+	if err == nil {
+		t.Fatal("Render() error = nil, want an error for a stream closed without MessageDone")
+	}
+}
+
+func TestPlainRendererRespectsCancellation(t *testing.T) {
+	ch := make(chan llm.Event) // never sends
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(10*time.Millisecond, cancel)
+
+	start := time.Now()
+	_, err := (PlainRenderer{Out: &bytes.Buffer{}}).Render(ctx, ch)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Render() error = %v, want it to wrap context.Canceled", err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("Render() took %s after cancellation, want a prompt return", elapsed)
+	}
+}
+
+func TestPlainRendererToolStatusHasNoANSI(t *testing.T) {
+	var buf bytes.Buffer
+	r := PlainRenderer{Out: &buf}
+	r.ToolStarted("t1", "read_file", json.RawMessage(`{"path":"x"}`))
+	r.ToolFinished("t1", "read_file", "contents", false)
+	r.ToolFinished("t1", "read_file", "boom", true)
+
+	if strings.ContainsRune(buf.String(), '\x1b') {
+		t.Errorf("tool status output contains an ANSI escape byte: %q", buf.String())
+	}
+}

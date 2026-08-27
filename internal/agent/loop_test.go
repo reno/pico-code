@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"github.com/reno/pico-code/internal/history"
 	"github.com/reno/pico-code/internal/llm"
 	"github.com/reno/pico-code/internal/tools"
+	"github.com/reno/pico-code/internal/ui"
 )
 
 // scriptedProvider returns responses in order, one per Chat call — the
@@ -44,8 +46,36 @@ func (s *scriptedProvider) Chat(ctx context.Context, _ llm.Request) (*llm.Respon
 	return resp, nil
 }
 
-func (s *scriptedProvider) Stream(_ context.Context, _ llm.Request) (<-chan llm.Event, error) {
-	return nil, errors.New("scripted: streaming not implemented")
+// Stream reuses the same scripted responses as Chat, turning each one into
+// the event sequence llm.CollectStream would reassemble back into it, so
+// RunStream tests can script conversations the same way Run tests do.
+func (s *scriptedProvider) Stream(ctx context.Context, _ llm.Request) (<-chan llm.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.calls >= len(s.responses) {
+		return nil, fmt.Errorf("scripted: no response scripted for call %d", s.calls+1)
+	}
+	resp := s.responses[s.calls]
+	s.calls++
+	return llm.StreamEvents(ctx, func(send func(llm.Event) bool) {
+		for _, b := range resp.Message.Blocks {
+			switch v := b.(type) {
+			case llm.Text:
+				if !send(llm.TextDelta(v)) {
+					return
+				}
+			case llm.ToolUse:
+				if !send(llm.ToolUseStart{ID: v.ID, Name: v.Name}) {
+					return
+				}
+				if !send(llm.ToolUseDone{ID: v.ID, Input: v.Input}) {
+					return
+				}
+			}
+		}
+		send(llm.MessageDone{StopReason: resp.StopReason, Usage: resp.Usage})
+	}), nil
 }
 
 // delayedTool sleeps for delay before recording its own name to order (under
@@ -799,5 +829,134 @@ func TestRunDeniedWriteFileLeavesFileByteIdentical(t *testing.T) {
 	}
 	if string(got) != "original content" {
 		t.Errorf("file contents = %q, want the original untouched after a denied approval", got)
+	}
+}
+
+// statusRecordingRenderer wraps a ui.Renderer and records every
+// ToolStarted/ToolFinished call it receives, so a test can prove
+// RunStream actually reports tool status to a Renderer that asks for it.
+type statusRecordingRenderer struct {
+	ui.Renderer
+	mu     sync.Mutex
+	events []string
+}
+
+func (r *statusRecordingRenderer) ToolStarted(_, name string, _ json.RawMessage) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, "start:"+name)
+}
+
+func (r *statusRecordingRenderer) ToolFinished(_, name, _ string, isError bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	status := "ok"
+	if isError {
+		status = "error"
+	}
+	r.events = append(r.events, fmt.Sprintf("finish:%s:%s", name, status))
+}
+
+var _ ui.ToolStatusReporter = (*statusRecordingRenderer)(nil)
+
+// TestRunStreamDrivesScriptedConversationWithToolCall mirrors
+// TestRunDrivesScriptedConversationWithParallelTools but through RunStream:
+// the provider's Stream (not Chat) drives the round, and a ui.PlainRenderer
+// does the rendering. The point is proving RunStream reaches the same
+// final state as Run — valid history, right answer, right call count.
+func TestRunStreamDrivesScriptedConversationWithToolCall(t *testing.T) {
+	echo := &delayedTool{name: "echo_tool", delay: 0, result: "echoed", mu: &sync.Mutex{}, order: &[]string{}}
+	reg := tools.NewRegistry()
+	if err := reg.Register(echo); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	provider := &scriptedProvider{responses: []*llm.Response{
+		{
+			Message: llm.Message{
+				Role:   llm.RoleAssistant,
+				Blocks: []llm.Block{llm.ToolUse{ID: "call_1", Name: "echo_tool", Input: json.RawMessage(`{}`)}},
+			},
+			StopReason: "tool_use",
+		},
+		textResponse("done"),
+	}}
+
+	h := history.New()
+	a := New(provider, reg, h, "you are a test agent", 1024, Guards{}, 0, AutoApprove)
+
+	var buf bytes.Buffer
+	renderer := &statusRecordingRenderer{Renderer: ui.PlainRenderer{Out: &buf}}
+	got, err := a.RunStream(context.Background(), "please help", renderer)
+	if err != nil {
+		t.Fatalf("RunStream() error = %v", err)
+	}
+	if got != "done" {
+		t.Errorf("RunStream() = %q, want %q", got, "done")
+	}
+	if provider.calls != 2 {
+		t.Errorf("provider was called %d times, want 2", provider.calls)
+	}
+	if err := h.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	renderer.mu.Lock()
+	events := append([]string(nil), renderer.events...)
+	renderer.mu.Unlock()
+	want := []string{"start:echo_tool", "finish:echo_tool:ok"}
+	if diff := cmp.Diff(want, events); diff != "" {
+		t.Errorf("tool status events (-want +got):\n%s", diff)
+	}
+}
+
+// fakeRenderer lets a test script Render's return value directly, to
+// exercise RunStream's error path without a real event stream.
+type fakeRenderer struct {
+	resp *llm.Response
+	err  error
+}
+
+func (f *fakeRenderer) Render(context.Context, <-chan llm.Event) (*llm.Response, error) {
+	return f.resp, f.err
+}
+
+func TestRunStreamPropagatesRenderError(t *testing.T) {
+	provider := &scriptedProvider{responses: []*llm.Response{textResponse("unused")}}
+	h := history.New()
+	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{}, 0, AutoApprove)
+
+	wantErr := errors.New("render exploded")
+	_, err := a.RunStream(context.Background(), "hi", &fakeRenderer{err: wantErr})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("RunStream() error = %v, want it to wrap %v", err, wantErr)
+	}
+}
+
+func TestRunStreamStopsAtMaxTurnsGuard(t *testing.T) {
+	provider := &scriptedProvider{responses: []*llm.Response{
+		{
+			Message:    llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.ToolUse{ID: "call_1", Name: "missing_tool", Input: json.RawMessage(`{}`)}}},
+			StopReason: "tool_use",
+		},
+		{
+			Message:    llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.ToolUse{ID: "call_2", Name: "missing_tool", Input: json.RawMessage(`{}`)}}},
+			StopReason: "tool_use",
+		},
+	}}
+
+	h := history.New()
+	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{MaxTurns: 2}, 0, AutoApprove)
+
+	var buf bytes.Buffer
+	got, err := a.RunStream(context.Background(), "hi", ui.PlainRenderer{Out: &buf})
+	if err != nil {
+		t.Fatalf("RunStream() error = %v", err)
+	}
+	if !strings.Contains(got, "maximum of 2 turn") {
+		t.Errorf("RunStream() = %q, want an explanation naming the max-turns guard", got)
+	}
+	if err := h.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }
