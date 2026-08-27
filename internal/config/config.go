@@ -66,6 +66,7 @@ type Flags struct {
 	AllowWrite    bool
 	Session       string
 	AllowCommands []string
+	ContextWindow int
 }
 
 // Config is the fully resolved, validated configuration for a chat session.
@@ -98,6 +99,13 @@ type Config struct {
 	// with; empty means the tool isn't registered at all, since an empty
 	// allowlist would make it present but unconditionally useless.
 	AllowCommands []string
+
+	// ContextWindow is the token threshold history compaction (8.2)
+	// measures estimated usage against for providers other than Ollama,
+	// which uses NumCtx instead — Ollama's context window is already an
+	// explicit, required value, so compaction reuses it rather than
+	// tracking a second number that could drift from it.
+	ContextWindow int
 
 	// AnthropicAPIKey and OllamaHost come from the environment only; there
 	// is no flag for either, since committing a secret to a shell history
@@ -145,6 +153,7 @@ func Load(f Flags, getenv func(string) string) (*Config, error) {
 		AllowWrite:      f.AllowWrite,
 		Session:         f.Session,
 		AllowCommands:   f.AllowCommands,
+		ContextWindow:   f.ContextWindow,
 		AnthropicAPIKey: getenv("ANTHROPIC_API_KEY"),
 		OllamaHost:      getenv("OLLAMA_HOST"),
 	}, nil

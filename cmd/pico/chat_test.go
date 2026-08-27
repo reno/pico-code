@@ -371,3 +371,17 @@ func TestRunTUICommandNewSaveLoad(t *testing.T) {
 		t.Error("history is empty after /load, want the saved turn restored")
 	}
 }
+
+func TestCompactionPolicyUsesContextWindowForNonOllamaProviders(t *testing.T) {
+	got := compactionPolicy(&config.Config{Provider: config.ProviderAnthropic, ContextWindow: 123_456, NumCtx: 4096})
+	if got.ContextWindow != 123_456 {
+		t.Errorf("ContextWindow = %d, want the configured --context-window value (4096 is Ollama's NumCtx and must not leak in here)", got.ContextWindow)
+	}
+}
+
+func TestCompactionPolicyUsesNumCtxForOllama(t *testing.T) {
+	got := compactionPolicy(&config.Config{Provider: config.ProviderOllama, ContextWindow: 123_456, NumCtx: 8192})
+	if got.ContextWindow != 8192 {
+		t.Errorf("ContextWindow = %d, want NumCtx (8192), not --context-window (which Ollama ignores)", got.ContextWindow)
+	}
+}

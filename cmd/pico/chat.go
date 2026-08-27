@@ -50,6 +50,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 		allowWrite    bool
 		session       string
 		allowCommands []string
+		contextWindow int
 	}
 
 	cmd := &cobra.Command{
@@ -78,6 +79,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 				AllowWrite:    flags.allowWrite,
 				Session:       flags.session,
 				AllowCommands: flags.allowCommands,
+				ContextWindow: flags.contextWindow,
 			}, getenv)
 			if err != nil {
 				return fmt.Errorf("resolving config: %w", err)
@@ -102,6 +104,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 	f.BoolVar(&flags.allowWrite, "allow-write", false, "register the write_file tool (off by default)")
 	f.StringVar(&flags.session, "session", "", "name a session to resume or start; saved after every turn")
 	f.StringSliceVar(&flags.allowCommands, "allow-commands", nil, "comma-separated binary allowlist for run_command; registers the tool only if non-empty")
+	f.IntVar(&flags.contextWindow, "context-window", defaultContextWindow, "context window size compaction measures usage against (ignored by Ollama, which uses --num-ctx instead)")
 
 	return cmd
 }
@@ -148,18 +151,19 @@ var runChat = func(cmd *cobra.Command, cfg *config.Config) error {
 	return runPlainChat(cmd, cfg, provider, registry, h, guards, sess)
 }
 
-// defaultAnthropicContextWindow is a conservative stand-in for the real
-// per-model context window: config has no field for it (only Ollama's
-// NumCtx, since CLAUDE.md requires that one explicitly), so compaction
-// against Anthropic uses this constant rather than an actual model limit.
+// defaultContextWindow is --context-window's default: a conservative
+// stand-in for a real model's actual context size, used as-is unless the
+// flag overrides it. Ollama ignores it entirely and uses NumCtx instead —
+// that's already an explicit, required value (CLAUDE.md), so compaction
+// reuses it rather than tracking a second number that could drift from it.
 const (
-	defaultAnthropicContextWindow = 200_000
-	compactionTriggerFraction     = 0.75
-	compactionKeepTurns           = 6
+	defaultContextWindow      = 200_000
+	compactionTriggerFraction = 0.75
+	compactionKeepTurns       = 6
 )
 
 func compactionPolicy(cfg *config.Config) agent.CompactionPolicy {
-	window := defaultAnthropicContextWindow
+	window := cfg.ContextWindow
 	if cfg.Provider == config.ProviderOllama {
 		window = cfg.NumCtx
 	}

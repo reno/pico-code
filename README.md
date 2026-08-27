@@ -91,6 +91,7 @@ for that turn (a log line says so), and it isn't available at all under
 | `--allow-write`   | `false`      | register the `write_file` tool                                 |
 | `--session`       | (none)       | name a session to resume or start; saved after every turn       |
 | `--allow-commands`| (none)       | comma-separated binary allowlist; registers `run_command` only if non-empty |
+| `--context-window`| `200000`     | context window compaction measures usage against; ignored by Ollama, which uses `--num-ctx` |
 
 `PICO_CODE_PROVIDER` is an environment fallback for `--provider`, checked
 only when the flag isn't explicitly set. `ANTHROPIC_API_KEY` and
@@ -208,14 +209,3 @@ More generally: almost everything CLAUDE.md calls a "provider gotcha" was
 discovered by actually running a small model against this loop, not
 anticipated up front. The cloud model mostly behaves; the local one is what
 taught this codebase to be defensive.
-
-## Known limitations
-
-Written down here rather than left silent, since a couple of features
-described above are further along in the library than in the CLI wiring:
-
-- **Anthropic's compaction context window is a constant** (200,000 tokens),
-  not a real per-model value — there's no config field for it yet.
-
-None of these are silent — each surfaced while building something else and
-got written down instead of guessed at or left unstated.
