@@ -960,3 +960,62 @@ func TestRunStreamStopsAtMaxTurnsGuard(t *testing.T) {
 		t.Fatalf("Validate() error = %v", err)
 	}
 }
+
+// TestCumulativeUsageMatchesSumOfPerTurnUsage is 8.1's AC: cumulative
+// totals match the sum of per-turn Usage in a scripted run. The scripted
+// run includes a two-round turn (a tool call, then a final reply) so a
+// per-turn total that only counted the last round's Usage — not summed
+// across the turn's rounds — would also be caught here.
+func TestCumulativeUsageMatchesSumOfPerTurnUsage(t *testing.T) {
+	tool := &delayedTool{name: "echo_tool", result: "ok", mu: &sync.Mutex{}, order: &[]string{}}
+	reg := tools.NewRegistry()
+	if err := reg.Register(tool); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	provider := &scriptedProvider{responses: []*llm.Response{
+		{
+			Message:    llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.ToolUse{ID: "call_1", Name: "echo_tool", Input: json.RawMessage(`{}`)}}},
+			StopReason: "tool_use",
+			Usage:      llm.Usage{InputTokens: 10, OutputTokens: 5},
+		},
+		{
+			Message:    llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.Text{Text: "done with turn one"}}},
+			StopReason: "end_turn",
+			Usage:      llm.Usage{InputTokens: 20, OutputTokens: 8},
+		},
+		{
+			Message:    llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.Text{Text: "done with turn two"}}},
+			StopReason: "end_turn",
+			Usage:      llm.Usage{InputTokens: 30, OutputTokens: 12},
+		},
+	}}
+
+	h := history.New()
+	a := New(provider, reg, h, "", 1024, Guards{}, 0, AutoApprove)
+
+	if _, err := a.Run(context.Background(), "first turn"); err != nil {
+		t.Fatalf("Run() 1 error = %v", err)
+	}
+	if _, err := a.Run(context.Background(), "second turn"); err != nil {
+		t.Fatalf("Run() 2 error = %v", err)
+	}
+
+	turns := a.TurnUsages()
+	wantTurns := []llm.Usage{
+		{InputTokens: 30, OutputTokens: 13}, // turn 1: round1 (10,5) + round2 (20,8)
+		{InputTokens: 30, OutputTokens: 12}, // turn 2: single round
+	}
+	if diff := cmp.Diff(wantTurns, turns); diff != "" {
+		t.Errorf("TurnUsages() mismatch (-want +got):\n%s", diff)
+	}
+
+	var wantCumulative llm.Usage
+	for _, u := range turns {
+		wantCumulative.InputTokens += u.InputTokens
+		wantCumulative.OutputTokens += u.OutputTokens
+	}
+	if got := a.CumulativeUsage(); got != wantCumulative {
+		t.Errorf("CumulativeUsage() = %+v, want it to equal the sum of TurnUsages(): %+v", got, wantCumulative)
+	}
+}

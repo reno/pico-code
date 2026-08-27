@@ -168,8 +168,9 @@ func toParameters(raw json.RawMessage) (api.ToolFunctionParameters, error) {
 }
 
 // fromResponse translates a non-streaming ChatResponse into the canonical
-// Response.
-func fromResponse(resp *api.ChatResponse) (*llm.Response, error) {
+// Response. req is only used to estimate token counts when resp's own are
+// 0 (see estimateUsage) — translation of the message itself doesn't need it.
+func fromResponse(req llm.Request, resp *api.ChatResponse) (*llm.Response, error) {
 	blocks, err := fromMessage(resp.Message)
 	if err != nil {
 		return nil, err
@@ -177,10 +178,10 @@ func fromResponse(resp *api.ChatResponse) (*llm.Response, error) {
 	return &llm.Response{
 		Message:    llm.Message{Role: llm.RoleAssistant, Blocks: blocks},
 		StopReason: resp.DoneReason,
-		Usage: llm.Usage{
+		Usage: estimateUsage(req, resp.Message.Content, llm.Usage{
 			InputTokens:  resp.PromptEvalCount,
 			OutputTokens: resp.EvalCount,
-		},
+		}),
 	}, nil
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/reno/pico-code/internal/history"
 	"github.com/reno/pico-code/internal/llm"
 	"github.com/reno/pico-code/internal/tools"
+	"github.com/reno/pico-code/internal/ui"
 )
 
 // fakeChatProvider returns one canned reply, enough to drive
@@ -61,5 +63,39 @@ func TestPipedChatProducesCleanANSIFreeOutput(t *testing.T) {
 	}
 	if err := h.Validate(); err != nil {
 		t.Errorf("history.Validate() error = %v", err)
+	}
+}
+
+// TestUsageCommandReportsCumulativeAcrossTurns is 8.1's AC ("expose /usage
+// in the chat"), driven through runREPL so it never needs a real terminal.
+func TestUsageCommandReportsCumulativeAcrossTurns(t *testing.T) {
+	provider := &fakeChatProvider{reply: "ok"}
+	h := history.New()
+	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+	renderer := ui.PlainRenderer{Out: io.Discard}
+
+	var out bytes.Buffer
+	in := strings.NewReader("hello\n/usage\n")
+	if err := runREPL(context.Background(), in, &out, ag, renderer); err != nil {
+		t.Fatalf("runREPL() error = %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "1 turn") {
+		t.Errorf("output = %q, want it to report 1 completed turn", got)
+	}
+	if strings.ContainsRune(got, '\x1b') {
+		t.Errorf("output contains an ANSI escape byte: %q", got)
+	}
+}
+
+func TestSlashCommandParsesNameAndArg(t *testing.T) {
+	name, arg, ok := slashCommand("/save my-session")
+	if !ok || name != "save" || arg != "my-session" {
+		t.Errorf("slashCommand(%q) = (%q, %q, %v), want (\"save\", \"my-session\", true)", "/save my-session", name, arg, ok)
+	}
+
+	if _, _, ok := slashCommand("not a command"); ok {
+		t.Error("slashCommand on ordinary text should return ok = false")
 	}
 }

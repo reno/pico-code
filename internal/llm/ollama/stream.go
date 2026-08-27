@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/ollama/ollama/api"
 
@@ -56,6 +57,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 		defer func() { _ = res.Body.Close() }()
 
 		toolCallSeq := 0
+		var respText strings.Builder
 		scanner := bufio.NewScanner(res.Body)
 		scanner.Buffer(nil, 1024*1024)
 
@@ -76,8 +78,11 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 				return
 			}
 
-			if chunk.Message.Content != "" && !send(llm.TextDelta{Text: chunk.Message.Content}) {
-				return
+			if chunk.Message.Content != "" {
+				respText.WriteString(chunk.Message.Content)
+				if !send(llm.TextDelta{Text: chunk.Message.Content}) {
+					return
+				}
 			}
 
 			for _, tc := range chunk.Message.ToolCalls {
@@ -103,7 +108,10 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 			if chunk.Done {
 				send(llm.MessageDone{
 					StopReason: chunk.DoneReason,
-					Usage:      llm.Usage{InputTokens: chunk.PromptEvalCount, OutputTokens: chunk.EvalCount},
+					Usage: estimateUsage(req, respText.String(), llm.Usage{
+						InputTokens:  chunk.PromptEvalCount,
+						OutputTokens: chunk.EvalCount,
+					}),
 				})
 				return
 			}

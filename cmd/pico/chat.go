@@ -182,7 +182,14 @@ func runPlainChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider,
 		return err
 	}
 
-	out := cmd.OutOrStdout()
+	return runREPL(ctx, in, cmd.OutOrStdout(), ag, renderer)
+}
+
+// runREPL reads one line at a time from in, dispatching a leading slash
+// command to handleCommand and everything else to ag.RunStream, until in
+// hits EOF or ctx is cancelled. Split out from runPlainChat so a test can
+// drive it directly without needing a real terminal for isInteractive.
+func runREPL(ctx context.Context, in io.Reader, out io.Writer, ag *agent.Agent, renderer ui.Renderer) error {
 	prompt := func() { _, _ = fmt.Fprint(out, "> ") }
 
 	scanner := bufio.NewScanner(in)
@@ -190,6 +197,13 @@ func runPlainChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider,
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
+			prompt()
+			continue
+		}
+		if name, arg, ok := slashCommand(line); ok {
+			if _, err := handleCommand(out, ag, name, arg); err != nil {
+				return err
+			}
 			prompt()
 			continue
 		}

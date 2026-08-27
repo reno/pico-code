@@ -40,6 +40,8 @@ type Agent struct {
 	guards      Guards
 	toolTimeout time.Duration
 	approver    Approver
+
+	turnUsages []llm.Usage
 }
 
 // New returns an Agent ready to run turns against provider, using registry
@@ -108,22 +110,28 @@ func (a *Agent) request() llm.Request {
 // roundState carries the bookkeeping Run and RunStream both accumulate
 // across rounds of the same turn.
 type roundState struct {
-	start              time.Time
-	turns, totalTokens int
-	repeatStreak       int
-	lastSignature      string
+	start         time.Time
+	turns         int
+	usage         llm.Usage
+	repeatStreak  int
+	lastSignature string
 }
 
 // runRound appends resp to history, runs any tool calls it contains, and
 // reports whether the turn is over — either because resp had no tool calls
 // or because a guard tripped — along with the text to return in that case.
+// Either way it's the turn's last round, so this is also where its total
+// Usage (summed across every round) gets recorded for TurnUsages/
+// CumulativeUsage (8.1).
 func (a *Agent) runRound(ctx context.Context, resp *llm.Response, rs *roundState, reporter ui.ToolStatusReporter) (string, bool) {
 	rs.turns++
-	rs.totalTokens += resp.Usage.InputTokens + resp.Usage.OutputTokens
+	rs.usage.InputTokens += resp.Usage.InputTokens
+	rs.usage.OutputTokens += resp.Usage.OutputTokens
 	a.history.Append(resp.Message)
 
 	calls := toolUseBlocks(resp.Message)
 	if len(calls) == 0 {
+		a.turnUsages = append(a.turnUsages, rs.usage)
 		return textOf(resp.Message), true
 	}
 
@@ -135,10 +143,28 @@ func (a *Agent) runRound(ctx context.Context, resp *llm.Response, rs *roundState
 
 	a.history.Append(llm.Message{Role: llm.RoleUser, Blocks: a.runTools(ctx, calls, reporter)})
 
-	if reason, tripped := a.guardTripped(rs.turns, rs.totalTokens, time.Since(rs.start), rs.repeatStreak); tripped {
+	totalTokens := rs.usage.InputTokens + rs.usage.OutputTokens
+	if reason, tripped := a.guardTripped(rs.turns, totalTokens, time.Since(rs.start), rs.repeatStreak); tripped {
+		a.turnUsages = append(a.turnUsages, rs.usage)
 		return a.stopWithExplanation(reason), true
 	}
 	return "", false
+}
+
+// TurnUsages returns each completed turn's total Usage (summed across that
+// turn's provider rounds), in the order the turns finished.
+func (a *Agent) TurnUsages() []llm.Usage {
+	return append([]llm.Usage(nil), a.turnUsages...)
+}
+
+// CumulativeUsage sums every completed turn's Usage.
+func (a *Agent) CumulativeUsage() llm.Usage {
+	var total llm.Usage
+	for _, u := range a.turnUsages {
+		total.InputTokens += u.InputTokens
+		total.OutputTokens += u.OutputTokens
+	}
+	return total
 }
 
 func (a *Agent) guardTripped(turns, totalTokens int, elapsed time.Duration, repeatStreak int) (string, bool) {

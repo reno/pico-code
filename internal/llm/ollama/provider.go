@@ -109,5 +109,5 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request) (*llm.Response, er
 		return nil, fmt.Errorf("ollama: decode response: %w", err)
 	}
 
-	return fromResponse(&chatResp)
+	return fromResponse(req, &chatResp)
 }

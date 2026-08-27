@@ -26,7 +26,7 @@ func decodeFixture(t *testing.T, path string) *llm.Response {
 	if err := json.Unmarshal(normalized, &chatResp); err != nil {
 		t.Fatalf("Unmarshal(%s) error = %v", path, err)
 	}
-	got, err := fromResponse(&chatResp)
+	got, err := fromResponse(llm.Request{}, &chatResp)
 	if err != nil {
 		t.Fatalf("fromResponse(%s) error = %v", path, err)
 	}
