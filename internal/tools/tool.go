@@ -18,3 +18,20 @@ type Tool interface {
 	Schema() json.RawMessage
 	Run(ctx context.Context, input json.RawMessage) (string, error)
 }
+
+// ApprovalRequired is implemented by a Tool whose side effects need
+// explicit user sign-off before Run executes. CLAUDE.md invariant 5 makes
+// the agent loop the sole owner of approval policy, so a Tool only
+// declares whether it needs approval — it never prompts.
+type ApprovalRequired interface {
+	Tool
+	NeedsApproval() bool
+}
+
+// Previewable is implemented by a Tool that can describe its effect ahead
+// of Run — e.g. write_file's diff against the file's current contents —
+// so the loop can show it alongside an approval prompt.
+type Previewable interface {
+	Tool
+	Preview(ctx context.Context, input json.RawMessage) (string, error)
+}

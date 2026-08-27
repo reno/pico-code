@@ -120,7 +120,7 @@ func TestRunDrivesScriptedConversationWithParallelTools(t *testing.T) {
 	}}
 
 	h := history.New()
-	a := New(provider, reg, h, "you are a test agent", 1024, Guards{}, 0)
+	a := New(provider, reg, h, "you are a test agent", 1024, Guards{}, 0, AutoApprove)
 
 	got, err := a.Run(context.Background(), "please help")
 	if err != nil {
@@ -182,7 +182,7 @@ func TestRunReturnsTextImmediatelyWhenNoToolCall(t *testing.T) {
 	}}
 
 	h := history.New()
-	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{}, 0)
+	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{}, 0, AutoApprove)
 
 	got, err := a.Run(context.Background(), "hi")
 	if err != nil {
@@ -215,7 +215,7 @@ func TestRunTurnsUnknownToolIntoErrorResult(t *testing.T) {
 	}}
 
 	h := history.New()
-	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{}, 0)
+	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{}, 0, AutoApprove)
 
 	if _, err := a.Run(context.Background(), "hi"); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -237,7 +237,7 @@ func TestRunTurnsUnknownToolIntoErrorResult(t *testing.T) {
 func TestRunPropagatesProviderError(t *testing.T) {
 	provider := &scriptedProvider{responses: nil}
 	h := history.New()
-	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{}, 0)
+	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{}, 0, AutoApprove)
 
 	if _, err := a.Run(context.Background(), "hi"); err == nil {
 		t.Fatal("Run() error = nil, want the provider's error propagated")
@@ -303,7 +303,7 @@ func TestRunStopsAtMaxTurnsGuard(t *testing.T) {
 	provider := &scriptedProvider{responses: []*llm.Response{toolCallResponse("call_1"), toolCallResponse("call_2")}}
 
 	h := history.New()
-	a := New(provider, reg, h, "", 1024, Guards{MaxTurns: 2}, 0)
+	a := New(provider, reg, h, "", 1024, Guards{MaxTurns: 2}, 0, AutoApprove)
 
 	got, err := a.Run(context.Background(), "keep going forever")
 	if err != nil {
@@ -339,7 +339,7 @@ func TestRunStopsAtTokenBudgetGuard(t *testing.T) {
 	provider := &scriptedProvider{responses: []*llm.Response{round("call_1", 10), round("call_2", 10)}}
 
 	h := history.New()
-	a := New(provider, reg, h, "", 1024, Guards{TokenBudget: 15}, 0)
+	a := New(provider, reg, h, "", 1024, Guards{TokenBudget: 15}, 0, AutoApprove)
 
 	got, err := a.Run(context.Background(), "keep going forever")
 	if err != nil {
@@ -377,7 +377,7 @@ func TestRunStopsAtWallClockGuard(t *testing.T) {
 	}}
 
 	h := history.New()
-	a := New(provider, reg, h, "", 1024, Guards{WallClock: 15 * time.Millisecond}, 0)
+	a := New(provider, reg, h, "", 1024, Guards{WallClock: 15 * time.Millisecond}, 0, AutoApprove)
 
 	got, err := a.Run(context.Background(), "keep going forever")
 	if err != nil {
@@ -418,7 +418,7 @@ func TestRunStopsAtRepetitionGuard(t *testing.T) {
 	provider := &scriptedProvider{responses: []*llm.Response{identical("call_1"), identical("call_2"), identical("call_3")}}
 
 	h := history.New()
-	a := New(provider, reg, h, "", 1024, Guards{}, 0)
+	a := New(provider, reg, h, "", 1024, Guards{}, 0, AutoApprove)
 
 	got, err := a.Run(context.Background(), "keep going forever")
 	if err != nil {
@@ -462,7 +462,7 @@ func TestRunDoesNotTripRepetitionGuardOnAlternatingCalls(t *testing.T) {
 	}}
 
 	h := history.New()
-	a := New(provider, reg, h, "", 1024, Guards{}, 0)
+	a := New(provider, reg, h, "", 1024, Guards{}, 0, AutoApprove)
 
 	got, err := a.Run(context.Background(), "alternate")
 	if err != nil {
@@ -502,7 +502,7 @@ func TestRunRecoversFromPanickingTool(t *testing.T) {
 	}}
 
 	h := history.New()
-	a := New(provider, reg, h, "", 1024, Guards{}, 0)
+	a := New(provider, reg, h, "", 1024, Guards{}, 0, AutoApprove)
 
 	got, err := a.Run(context.Background(), "call the panicking tool")
 	if err != nil {
@@ -553,7 +553,7 @@ func TestRunTimesOutHangingTool(t *testing.T) {
 	}}
 
 	h := history.New()
-	a := New(provider, reg, h, "", 1024, Guards{}, 20*time.Millisecond)
+	a := New(provider, reg, h, "", 1024, Guards{}, 20*time.Millisecond, AutoApprove)
 
 	start := time.Now()
 	got, err := a.Run(context.Background(), "call the hanging tool")
@@ -611,7 +611,7 @@ func TestRunHandlesCancellationMidTool(t *testing.T) {
 	provider := &scriptedProvider{responses: []*llm.Response{toolCallResponseNamed("call_1", "blocking_tool")}}
 
 	h := history.New()
-	a := New(provider, reg, h, "", 1024, Guards{}, 0)
+	a := New(provider, reg, h, "", 1024, Guards{}, 0, AutoApprove)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -630,5 +630,121 @@ func TestRunHandlesCancellationMidTool(t *testing.T) {
 	result := h.Snapshot()[2].Blocks[0].(llm.ToolResult)
 	if !result.IsError {
 		t.Error("ToolResult.IsError = false, want true for a cancelled tool")
+	}
+}
+
+// approvalTool implements tools.ApprovalRequired; ran records whether Run
+// was actually invoked, so tests can prove a denial skips it.
+type approvalTool struct {
+	ran bool
+}
+
+func (t *approvalTool) Name() string            { return "sensitive_tool" }
+func (t *approvalTool) Description() string     { return "a tool that requires approval" }
+func (t *approvalTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *approvalTool) NeedsApproval() bool     { return true }
+func (t *approvalTool) Run(_ context.Context, _ json.RawMessage) (string, error) {
+	t.ran = true
+	return "done", nil
+}
+
+var _ tools.ApprovalRequired = (*approvalTool)(nil)
+
+type fakeApprover struct {
+	approve bool
+	err     error
+	asked   bool
+}
+
+func (f *fakeApprover) Approve(_ context.Context, _ string, _ json.RawMessage, _ string) (bool, error) {
+	f.asked = true
+	return f.approve, f.err
+}
+
+// TestRunDeniedApprovalSkipsToolAndContinues is 5.3's AC: a denied approval
+// returns an error result and the loop continues.
+func TestRunDeniedApprovalSkipsToolAndContinues(t *testing.T) {
+	reg := tools.NewRegistry()
+	tool := &approvalTool{}
+	if err := reg.Register(tool); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	provider := &scriptedProvider{responses: []*llm.Response{
+		toolCallResponseNamed("call_1", "sensitive_tool"),
+		textResponse("moved on"),
+	}}
+
+	h := history.New()
+	approver := &fakeApprover{approve: false}
+	a := New(provider, reg, h, "", 1024, Guards{}, 0, approver)
+
+	got, err := a.Run(context.Background(), "do the sensitive thing")
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got != "moved on" {
+		t.Errorf("Run() = %q, want %q", got, "moved on")
+	}
+	if !approver.asked {
+		t.Error("approver was never consulted")
+	}
+	if tool.ran {
+		t.Error("tool.Run was called despite a denied approval")
+	}
+	if err := h.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	result := h.Snapshot()[2].Blocks[0].(llm.ToolResult)
+	if !result.IsError {
+		t.Error("ToolResult.IsError = false, want true for a denied approval")
+	}
+}
+
+func TestRunApprovedCallRunsTheTool(t *testing.T) {
+	reg := tools.NewRegistry()
+	tool := &approvalTool{}
+	if err := reg.Register(tool); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	provider := &scriptedProvider{responses: []*llm.Response{
+		toolCallResponseNamed("call_1", "sensitive_tool"),
+		textResponse("finished"),
+	}}
+
+	h := history.New()
+	approver := &fakeApprover{approve: true}
+	a := New(provider, reg, h, "", 1024, Guards{}, 0, approver)
+
+	if _, err := a.Run(context.Background(), "do the sensitive thing"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !approver.asked {
+		t.Error("approver was never consulted")
+	}
+	if !tool.ran {
+		t.Error("tool.Run was never called despite an approved approval")
+	}
+}
+
+func TestRunSkipsApprovalForToolsThatDontNeedIt(t *testing.T) {
+	reg := tools.NewRegistry()
+	if err := reg.Register(echoTool{}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	provider := &scriptedProvider{responses: []*llm.Response{toolCallResponse("call_1"), textResponse("done")}}
+
+	h := history.New()
+	approver := &fakeApprover{approve: false}
+	a := New(provider, reg, h, "", 1024, Guards{}, 0, approver)
+
+	if _, err := a.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if approver.asked {
+		t.Error("approver was consulted for a tool that doesn't implement ApprovalRequired")
 	}
 }

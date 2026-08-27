@@ -38,13 +38,15 @@ type Agent struct {
 	maxTokens   int
 	guards      Guards
 	toolTimeout time.Duration
+	approver    Approver
 }
 
 // New returns an Agent ready to run turns against provider, using registry
 // to execute any tool call it issues, appending to h. toolTimeout bounds a
-// single tool call (0 = unlimited).
-func New(provider llm.Provider, registry *tools.Registry, h *history.History, system string, maxTokens int, guards Guards, toolTimeout time.Duration) *Agent {
-	return &Agent{provider: provider, tools: registry, history: h, system: system, maxTokens: maxTokens, guards: guards, toolTimeout: toolTimeout}
+// single tool call (0 = unlimited). approver is consulted before running any
+// tools.ApprovalRequired call; pass AutoApprove for --yes.
+func New(provider llm.Provider, registry *tools.Registry, h *history.History, system string, maxTokens int, guards Guards, toolTimeout time.Duration, approver Approver) *Agent {
+	return &Agent{provider: provider, tools: registry, history: h, system: system, maxTokens: maxTokens, guards: guards, toolTimeout: toolTimeout, approver: approver}
 }
 
 // Run appends userInput to history, then drives the call-provider /
@@ -138,6 +140,10 @@ type toolOutcome struct {
 // this call past toolTimeout or cancellation; if the deadline wins the race,
 // the goroutine is simply abandoned rather than waited on.
 func (a *Agent) runTool(ctx context.Context, call llm.ToolUse) llm.Block {
+	if result, denied := a.checkApproval(ctx, call); denied {
+		return result
+	}
+
 	toolCtx := ctx
 	if a.toolTimeout > 0 {
 		var cancel context.CancelFunc
@@ -165,6 +171,37 @@ func (a *Agent) runTool(ctx context.Context, call llm.ToolUse) llm.Block {
 	case <-toolCtx.Done():
 		return llm.ToolResult{ToolUseID: call.ID, Content: fmt.Sprintf("tool %q: %v", call.Name, toolCtx.Err()), IsError: true}
 	}
+}
+
+// checkApproval reports whether call was denied, in which case the
+// returned ToolResult should be used as-is instead of running the tool.
+func (a *Agent) checkApproval(ctx context.Context, call llm.ToolUse) (llm.Block, bool) {
+	t, err := a.tools.Get(call.Name)
+	if err != nil {
+		return nil, false
+	}
+	ar, ok := t.(tools.ApprovalRequired)
+	if !ok || !ar.NeedsApproval() {
+		return nil, false
+	}
+
+	preview := ""
+	if p, ok := t.(tools.Previewable); ok {
+		if text, err := p.Preview(ctx, call.Input); err == nil {
+			preview = text
+		} else {
+			preview = fmt.Sprintf("(preview unavailable: %v)", err)
+		}
+	}
+
+	approved, err := a.approver.Approve(ctx, call.Name, call.Input, preview)
+	if err != nil {
+		return llm.ToolResult{ToolUseID: call.ID, Content: fmt.Sprintf("approval error: %v", err), IsError: true}, true
+	}
+	if !approved {
+		return llm.ToolResult{ToolUseID: call.ID, Content: fmt.Sprintf("tool %q call denied by user", call.Name), IsError: true}, true
+	}
+	return nil, false
 }
 
 func callSignature(calls []llm.ToolUse) string {
