@@ -44,6 +44,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 		logLevel    string
 		numCtx      int
 		allowWrite  bool
+		session     string
 	}
 
 	cmd := &cobra.Command{
@@ -70,6 +71,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 				LogLevel:    flags.logLevel,
 				NumCtx:      flags.numCtx,
 				AllowWrite:  flags.allowWrite,
+				Session:     flags.session,
 			}, getenv)
 			if err != nil {
 				return fmt.Errorf("resolving config: %w", err)
@@ -92,6 +94,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 	f.StringVar(&flags.logLevel, "log-level", "info", "log level (debug|info|warn|error)")
 	f.IntVar(&flags.numCtx, "num-ctx", 4096, "context window size passed to Ollama's num_ctx (ignored by other providers)")
 	f.BoolVar(&flags.allowWrite, "allow-write", false, "register the write_file tool (off by default)")
+	f.StringVar(&flags.session, "session", "", "name a session to resume or start; saved after every turn")
 
 	return cmd
 }
@@ -109,13 +112,25 @@ var runChat = func(cmd *cobra.Command, cfg *config.Config) error {
 		return err
 	}
 
-	h := history.New()
+	sessDir, err := defaultSessionsDir()
+	if err != nil {
+		return err
+	}
+	sess, err := newSession(sessDir, cfg.Session)
+	if err != nil {
+		return err
+	}
+	h, err := sess.loadOrCreateHistory()
+	if err != nil {
+		return err
+	}
+
 	guards := agent.Guards{MaxTurns: cfg.MaxTurns, TokenBudget: cfg.TokenBudget}
 
 	if cfg.TUI {
-		return runTUIChat(cmd, cfg, provider, registry, h, guards)
+		return runTUIChat(cmd, cfg, provider, registry, h, guards, sess)
 	}
-	return runPlainChat(cmd, cfg, provider, registry, h, guards)
+	return runPlainChat(cmd, cfg, provider, registry, h, guards, sess)
 }
 
 // defaultAnthropicContextWindow is a conservative stand-in for the real
@@ -177,7 +192,7 @@ func buildRegistry(cfg *config.Config) (*tools.Registry, error) {
 // runPlainChat drives the agent through ui.PlainRenderer. Piped/non-TTY
 // stdin (the common case for scripting and for 7.1's AC) is read in full as
 // one message and answered once; a TTY gets a minimal read-eval-print loop.
-func runPlainChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, registry *tools.Registry, h *history.History, guards agent.Guards) error {
+func runPlainChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, registry *tools.Registry, h *history.History, guards agent.Guards, sess *session) error {
 	approver := agent.AutoApprove
 	if !cfg.Yes {
 		approver = agent.ConsoleApprover{In: cmd.InOrStdin(), Out: cmd.OutOrStdout()}
@@ -197,18 +212,21 @@ func runPlainChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider,
 		if input == "" {
 			return nil
 		}
-		_, err = ag.RunStream(ctx, input, renderer)
-		return err
+		if _, err := ag.RunStream(ctx, input, renderer); err != nil {
+			return err
+		}
+		return sess.saveIfActive(h)
 	}
 
-	return runREPL(ctx, in, cmd.OutOrStdout(), ag, renderer)
+	return runREPL(ctx, in, cmd.OutOrStdout(), ag, h, sess, renderer)
 }
 
 // runREPL reads one line at a time from in, dispatching a leading slash
-// command to handleCommand and everything else to ag.RunStream, until in
-// hits EOF or ctx is cancelled. Split out from runPlainChat so a test can
-// drive it directly without needing a real terminal for isInteractive.
-func runREPL(ctx context.Context, in io.Reader, out io.Writer, ag *agent.Agent, renderer ui.Renderer) error {
+// command to handleCommand and everything else to ag.RunStream (saving to
+// sess's file afterward, if one is active), until in hits EOF or ctx is
+// cancelled. Split out from runPlainChat so a test can drive it directly
+// without needing a real terminal for isInteractive.
+func runREPL(ctx context.Context, in io.Reader, out io.Writer, ag *agent.Agent, h *history.History, sess *session, renderer ui.Renderer) error {
 	prompt := func() { _, _ = fmt.Fprint(out, "> ") }
 
 	scanner := bufio.NewScanner(in)
@@ -220,7 +238,7 @@ func runREPL(ctx context.Context, in io.Reader, out io.Writer, ag *agent.Agent, 
 			continue
 		}
 		if name, arg, ok := slashCommand(line); ok {
-			if _, err := handleCommand(out, ag, name, arg); err != nil {
+			if _, err := handleCommand(out, ag, h, sess, name, arg); err != nil {
 				return err
 			}
 			prompt()
@@ -231,6 +249,9 @@ func runREPL(ctx context.Context, in io.Reader, out io.Writer, ag *agent.Agent, 
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if err := sess.saveIfActive(h); err != nil {
+			return err
 		}
 		prompt()
 	}
@@ -255,7 +276,7 @@ func isInteractive(in io.Reader) bool {
 // goroutine reads submitted input and calls RunStream, sending its
 // progress and result back into the program as messages, while
 // program.Run() owns the terminal until Ctrl+D quits it.
-func runTUIChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, registry *tools.Registry, h *history.History, guards agent.Guards) error {
+func runTUIChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, registry *tools.Registry, h *history.History, guards agent.Guards, sess *session) error {
 	ctx := cmd.Context()
 	submit := make(chan string, 1)
 	program := tea.NewProgram(ui.NewModel(submit), tea.WithAltScreen(), tea.WithContext(ctx))
@@ -271,6 +292,9 @@ func runTUIChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, r
 			ui.TurnStarted(program, cancel)
 			text, err := ag.RunStream(turnCtx, input, renderer)
 			cancel()
+			if err == nil {
+				err = sess.saveIfActive(h)
+			}
 			ui.TurnDone(program, text, err)
 		}
 	}()

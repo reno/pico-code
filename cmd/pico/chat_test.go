@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -49,7 +51,7 @@ func TestPipedChatProducesCleanANSIFreeOutput(t *testing.T) {
 	provider := &fakeChatProvider{reply: "hello there"}
 	h := history.New()
 
-	err := runPlainChat(cmd, cfg, provider, tools.NewRegistry(), h, agent.Guards{})
+	err := runPlainChat(cmd, cfg, provider, tools.NewRegistry(), h, agent.Guards{}, noSession(t))
 	if err != nil {
 		t.Fatalf("runPlainChat() error = %v", err)
 	}
@@ -76,7 +78,7 @@ func TestUsageCommandReportsCumulativeAcrossTurns(t *testing.T) {
 
 	var out bytes.Buffer
 	in := strings.NewReader("hello\n/usage\n")
-	if err := runREPL(context.Background(), in, &out, ag, renderer); err != nil {
+	if err := runREPL(context.Background(), in, &out, ag, h, noSession(t), renderer); err != nil {
 		t.Fatalf("runREPL() error = %v", err)
 	}
 
@@ -97,5 +99,110 @@ func TestSlashCommandParsesNameAndArg(t *testing.T) {
 
 	if _, _, ok := slashCommand("not a command"); ok {
 		t.Error("slashCommand on ordinary text should return ok = false")
+	}
+}
+
+// noSession returns an inactive session (no name) rooted at a temp
+// directory, for tests that need a *session parameter but don't care about
+// persistence.
+func noSession(t *testing.T) *session {
+	t.Helper()
+	sess, err := newSession(t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("newSession() error = %v", err)
+	}
+	return sess
+}
+
+// TestSessionAutoSavesAfterEachTurnAndResumes is 8.3's AC in the plain
+// REPL: killing the process mid-session and resuming has the model see the
+// full prior context. "Killing the process" is simulated by driving runREPL
+// once for the first half of the conversation, then constructing a brand
+// new History via the session's on-disk file (as a fresh process would)
+// and driving runREPL again.
+func TestSessionAutoSavesAfterEachTurnAndResumes(t *testing.T) {
+	dir := t.TempDir()
+
+	sess1, err := newSession(dir, "work")
+	if err != nil {
+		t.Fatalf("newSession() error = %v", err)
+	}
+	h1, err := sess1.loadOrCreateHistory()
+	if err != nil {
+		t.Fatalf("loadOrCreateHistory() error = %v", err)
+	}
+	provider := &fakeChatProvider{reply: "first reply"}
+	ag1 := agent.New(provider, tools.NewRegistry(), h1, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+	renderer := ui.PlainRenderer{Out: io.Discard}
+	if err := runREPL(context.Background(), strings.NewReader("first message\n"), io.Discard, ag1, h1, sess1, renderer); err != nil {
+		t.Fatalf("runREPL() (process 1) error = %v", err)
+	}
+
+	// A brand new process: nothing but the session name and the file it
+	// wrote to disk.
+	sess2, err := newSession(dir, "work")
+	if err != nil {
+		t.Fatalf("newSession() error = %v", err)
+	}
+	h2, err := sess2.loadOrCreateHistory()
+	if err != nil {
+		t.Fatalf("loadOrCreateHistory() (process 2) error = %v", err)
+	}
+
+	if err := h2.Validate(); err != nil {
+		t.Fatalf("Validate() on resumed history error = %v", err)
+	}
+	if got, want := len(h2.Snapshot()), len(h1.Snapshot()); got != want {
+		t.Fatalf("resumed history has %d messages, want %d (the full prior context)", got, want)
+	}
+}
+
+func TestSessionCommandsNewSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	sess, err := newSession(dir, "")
+	if err != nil {
+		t.Fatalf("newSession() error = %v", err)
+	}
+	h := history.New()
+	provider := &fakeChatProvider{reply: "reply"}
+	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+	renderer := ui.PlainRenderer{Out: io.Discard}
+
+	var out bytes.Buffer
+	in := strings.NewReader("hello there\n/save first\n/new\n/load first\n")
+	if err := runREPL(context.Background(), in, &out, ag, h, sess, renderer); err != nil {
+		t.Fatalf("runREPL() error = %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, `saved session "first"`) {
+		t.Errorf("output missing save confirmation: %q", got)
+	}
+	if !strings.Contains(got, "started a new, unsaved session") {
+		t.Errorf("output missing /new confirmation: %q", got)
+	}
+	if !strings.Contains(got, `loaded session "first"`) {
+		t.Errorf("output missing load confirmation: %q", got)
+	}
+	// /load restored the turn /new had cleared.
+	if len(h.Snapshot()) == 0 {
+		t.Error("history is empty after /load, want the saved turn restored")
+	}
+}
+
+// TestSessionLoadOfCorruptFileIsReadableErrorNotPanic is 8.3's other AC: a
+// corrupt session file fails with a readable error rather than a panic.
+func TestSessionLoadOfCorruptFileIsReadableErrorNotPanic(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte("not json"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	sess, err := newSession(dir, "broken")
+	if err != nil {
+		t.Fatalf("newSession() error = %v", err)
+	}
+	if _, err := sess.loadOrCreateHistory(); err == nil {
+		t.Fatal("loadOrCreateHistory() = nil error, want a readable error for a corrupt session file")
 	}
 }

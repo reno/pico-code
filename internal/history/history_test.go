@@ -195,3 +195,61 @@ func TestLoadRejectsCorruptFile(t *testing.T) {
 		t.Fatal("Load() = nil, want an error for a corrupt file")
 	}
 }
+
+// TestLoadIntoRoundTrip is 8.3's resume AC in miniature: a session saved,
+// then loaded into a different History via LoadInto, has the full prior
+// context.
+func TestLoadIntoRoundTrip(t *testing.T) {
+	saved := history.New()
+	saved.Append(textMsg(llm.RoleUser, "hello"))
+	saved.Append(textMsg(llm.RoleAssistant, "hi there"))
+	path := filepath.Join(t.TempDir(), "session.json")
+	if err := saved.Save(path); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	h := history.New()
+	h.Append(textMsg(llm.RoleUser, "this should be replaced"))
+	if err := h.LoadInto(path); err != nil {
+		t.Fatalf("LoadInto() error = %v", err)
+	}
+	if diff := cmp.Diff(saved.Snapshot(), h.Snapshot()); diff != "" {
+		t.Errorf("LoadInto() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestLoadIntoRejectsCorruptFileWithoutMutatingH is 8.3's AC: a corrupt
+// session file fails with a readable error rather than a panic — and here,
+// specifically, without leaving the caller's History half-replaced.
+func TestLoadIntoRejectsCorruptFileWithoutMutatingH(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.json")
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	h := history.New()
+	h.Append(textMsg(llm.RoleUser, "keep me"))
+	before := h.Snapshot()
+
+	if err := h.LoadInto(path); err == nil {
+		t.Fatal("LoadInto() = nil, want an error for a corrupt file")
+	}
+	if diff := cmp.Diff(before, h.Snapshot()); diff != "" {
+		t.Errorf("h was mutated despite LoadInto() failing (-before +after):\n%s", diff)
+	}
+}
+
+func TestReset(t *testing.T) {
+	h := history.New()
+	h.Append(textMsg(llm.RoleUser, "hello"))
+	h.Append(textMsg(llm.RoleAssistant, "hi"))
+
+	h.Reset()
+
+	if got := h.Snapshot(); len(got) != 0 {
+		t.Errorf("Snapshot() after Reset() = %v, want empty", got)
+	}
+	if err := h.Validate(); err != nil {
+		t.Errorf("Validate() after Reset() error = %v", err)
+	}
+}

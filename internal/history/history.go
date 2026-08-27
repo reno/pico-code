@@ -83,6 +83,34 @@ func (h *History) Save(path string) error {
 // returning, so a corrupted or hand-edited file can never be replayed in a
 // violating state.
 func Load(path string) (*History, error) {
+	msgs, err := loadMessages(path)
+	if err != nil {
+		return nil, err
+	}
+	return &History{messages: msgs}, nil
+}
+
+// LoadInto replaces h's messages with the ones stored at path, in place —
+// unlike Load, which returns a new History — so callers holding a shared
+// *History (e.g. an already-constructed Agent) can point it at a different
+// session without reconstructing anything downstream. Like Load, it
+// validates before committing: on error h is left completely untouched,
+// never partially loaded.
+func (h *History) LoadInto(path string) error {
+	msgs, err := loadMessages(path)
+	if err != nil {
+		return err
+	}
+	h.messages = msgs
+	return nil
+}
+
+// Reset clears h back to empty, in place.
+func (h *History) Reset() {
+	h.messages = nil
+}
+
+func loadMessages(path string) ([]llm.Message, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("history: read %s: %w", path, err)
@@ -95,7 +123,7 @@ func Load(path string) (*History, error) {
 	if err := h.Validate(); err != nil {
 		return nil, fmt.Errorf("history: loaded invalid history from %s: %w", path, err)
 	}
-	return h, nil
+	return msgs, nil
 }
 
 func toolUseIDs(m llm.Message) []string {
