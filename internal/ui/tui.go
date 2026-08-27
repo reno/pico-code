@@ -1,0 +1,147 @@
+package ui
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/reno/pico-code/internal/llm"
+)
+
+// The bubbletea messages driving Model.Update. They are unexported: only
+// TUIRenderer and TUIApprover in this package construct them, sending each
+// through the *tea.Program the caller owns — cmd/pico never touches these
+// directly, only wires Model, TUIRenderer, and TUIApprover together.
+type (
+	turnStartedMsg struct{ cancel context.CancelFunc }
+	textDeltaMsg   struct{ text string }
+	toolStartedMsg struct {
+		id, name string
+		input    json.RawMessage
+	}
+	toolFinishedMsg struct {
+		id, name, output string
+		isError          bool
+	}
+	turnDoneMsg struct {
+		text string
+		err  error
+	}
+	approvalRequestMsg struct {
+		toolName string
+		input    json.RawMessage
+		preview  string
+		resp     chan<- bool
+	}
+)
+
+// TUIRenderer implements Renderer and ToolStatusReporter by forwarding
+// every event to a *tea.Program as a message, so Model.Update can render
+// it — the same block-reconstruction PlainRenderer does, plus the side
+// effect of a Send instead of a Fprint.
+type TUIRenderer struct {
+	Program *tea.Program
+}
+
+// Render implements Renderer.
+func (r *TUIRenderer) Render(ctx context.Context, events <-chan llm.Event) (*llm.Response, error) {
+	var blocks []llm.Block
+	var text strings.Builder
+	textOpen := false
+	names := map[string]string{}
+
+	flushText := func() {
+		if textOpen {
+			blocks = append(blocks, llm.Text{Text: text.String()})
+			text.Reset()
+			textOpen = false
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case e, ok := <-events:
+			if !ok {
+				return nil, fmt.Errorf("ui: event stream closed before a MessageDone event")
+			}
+			switch v := e.(type) {
+			case llm.TextDelta:
+				textOpen = true
+				text.WriteString(v.Text)
+				r.Program.Send(textDeltaMsg{text: v.Text})
+			case llm.ToolUseStart:
+				flushText()
+				names[v.ID] = v.Name
+			case llm.ToolUseArgsDelta:
+			case llm.ToolUseDone:
+				blocks = append(blocks, llm.ToolUse{ID: v.ID, Name: names[v.ID], Input: v.Input})
+			case llm.MessageDone:
+				flushText()
+				return &llm.Response{
+					Message:    llm.Message{Role: llm.RoleAssistant, Blocks: blocks},
+					StopReason: v.StopReason,
+					Usage:      v.Usage,
+				}, nil
+			case llm.Error:
+				return nil, v.Err
+			default:
+				return nil, fmt.Errorf("ui: unknown event type %T", e)
+			}
+		}
+	}
+}
+
+// ToolStarted implements ToolStatusReporter.
+func (r *TUIRenderer) ToolStarted(id, name string, input json.RawMessage) {
+	r.Program.Send(toolStartedMsg{id: id, name: name, input: input})
+}
+
+// ToolFinished implements ToolStatusReporter.
+func (r *TUIRenderer) ToolFinished(id, name, output string, isError bool) {
+	r.Program.Send(toolFinishedMsg{id: id, name: name, output: output, isError: isError})
+}
+
+var (
+	_ Renderer           = (*TUIRenderer)(nil)
+	_ ToolStatusReporter = (*TUIRenderer)(nil)
+)
+
+// TUIApprover implements the agent.Approver contract (matched structurally
+// to avoid this package importing internal/agent) by showing a modal in
+// the TUI and blocking until it's answered or ctx is cancelled. Approve
+// runs on the agent loop's tool goroutine, never on the tea.Program's own
+// goroutine, so blocking here does not freeze the UI.
+type TUIApprover struct {
+	Program *tea.Program
+}
+
+// Approve sends an approval request to the running Model and waits for its
+// answer.
+func (a *TUIApprover) Approve(ctx context.Context, toolName string, input json.RawMessage, preview string) (bool, error) {
+	resp := make(chan bool, 1)
+	a.Program.Send(approvalRequestMsg{toolName: toolName, input: input, preview: preview, resp: resp})
+	select {
+	case ok := <-resp:
+		return ok, nil
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+}
+
+// TurnStarted announces a turn's start (and its cancel func, for Ctrl+C) to
+// the running Model, letting cmd/pico's driver loop do so without
+// constructing the unexported message type itself. TurnDone is its
+// counterpart for a turn's end.
+func TurnStarted(program *tea.Program, cancel context.CancelFunc) {
+	program.Send(turnStartedMsg{cancel: cancel})
+}
+
+// TurnDone announces a turn's result, mirroring TurnStarted.
+func TurnDone(program *tea.Program, text string, err error) {
+	program.Send(turnDoneMsg{text: text, err: err})
+}

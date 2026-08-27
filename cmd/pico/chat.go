@@ -1,11 +1,29 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
+	"github.com/reno/pico-code/internal/agent"
 	"github.com/reno/pico-code/internal/config"
+	"github.com/reno/pico-code/internal/history"
+	"github.com/reno/pico-code/internal/llm"
+	"github.com/reno/pico-code/internal/tools"
+	"github.com/reno/pico-code/internal/ui"
+)
+
+const (
+	systemPrompt       = "You are pico code, a terminal coding agent. Be direct and concise."
+	defaultMaxTokens   = 4096
+	defaultToolTimeout = 2 * time.Minute
 )
 
 // newChatCmd builds the chat subcommand. Flag values win over the
@@ -78,8 +96,152 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 	return cmd
 }
 
-// runChat is a placeholder until the agent loop (phase 4) exists.
-func runChat(cmd *cobra.Command, cfg *config.Config) error {
-	_, err := fmt.Fprintf(cmd.OutOrStdout(), "pico chat: provider=%s model=%s (agent loop not yet implemented)\n", cfg.Provider, cfg.Model)
+// runChat is a package var so tests can substitute a stub instead of
+// driving a real provider/agent turn end to end.
+var runChat = func(cmd *cobra.Command, cfg *config.Config) error {
+	provider, err := llm.New(cfg)
+	if err != nil {
+		return fmt.Errorf("resolving provider: %w", err)
+	}
+
+	registry, err := buildRegistry(cfg)
+	if err != nil {
+		return err
+	}
+
+	h := history.New()
+	guards := agent.Guards{MaxTurns: cfg.MaxTurns, TokenBudget: cfg.TokenBudget}
+
+	if cfg.TUI {
+		return runTUIChat(cmd, provider, registry, h, guards)
+	}
+	return runPlainChat(cmd, cfg, provider, registry, h, guards)
+}
+
+// buildRegistry wires the built-in tools this session offers. run_command
+// is deliberately left out: CLAUDE.md requires it to have a binary
+// allowlist from config, and no config flag for one exists yet — a real
+// gap, not an oversight, worth a TASKS.md follow-up rather than a silent
+// empty allowlist that would make the tool present but useless.
+func buildRegistry(cfg *config.Config) (*tools.Registry, error) {
+	sandbox, err := tools.NewSandbox(cfg.Workspace, nil)
+	if err != nil {
+		return nil, fmt.Errorf("resolving workspace sandbox: %w", err)
+	}
+
+	registry := tools.NewRegistry()
+	readTool, err := tools.NewReadFileTool(sandbox)
+	if err != nil {
+		return nil, err
+	}
+	if err := registry.Register(readTool); err != nil {
+		return nil, err
+	}
+	listTool, err := tools.NewListDirTool(sandbox)
+	if err != nil {
+		return nil, err
+	}
+	if err := registry.Register(listTool); err != nil {
+		return nil, err
+	}
+	if cfg.AllowWrite {
+		writeTool, err := tools.NewWriteFileTool(sandbox)
+		if err != nil {
+			return nil, err
+		}
+		if err := registry.Register(writeTool); err != nil {
+			return nil, err
+		}
+	}
+	return registry, nil
+}
+
+// runPlainChat drives the agent through ui.PlainRenderer. Piped/non-TTY
+// stdin (the common case for scripting and for 7.1's AC) is read in full as
+// one message and answered once; a TTY gets a minimal read-eval-print loop.
+func runPlainChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, registry *tools.Registry, h *history.History, guards agent.Guards) error {
+	approver := agent.AutoApprove
+	if !cfg.Yes {
+		approver = agent.ConsoleApprover{In: cmd.InOrStdin(), Out: cmd.OutOrStdout()}
+	}
+	ag := agent.New(provider, registry, h, systemPrompt, defaultMaxTokens, guards, defaultToolTimeout, approver)
+	renderer := ui.PlainRenderer{Out: cmd.OutOrStdout()}
+	ctx := cmd.Context()
+	in := cmd.InOrStdin()
+
+	if !isInteractive(in) {
+		data, err := io.ReadAll(in)
+		if err != nil {
+			return fmt.Errorf("reading stdin: %w", err)
+		}
+		input := strings.TrimSpace(string(data))
+		if input == "" {
+			return nil
+		}
+		_, err = ag.RunStream(ctx, input, renderer)
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	prompt := func() { _, _ = fmt.Fprint(out, "> ") }
+
+	scanner := bufio.NewScanner(in)
+	prompt()
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			prompt()
+			continue
+		}
+		if _, err := ag.RunStream(ctx, line, renderer); err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		prompt()
+	}
+	return scanner.Err()
+}
+
+// isInteractive reports whether in is a terminal. A non-*os.File reader
+// (e.g. a test's bytes.Buffer) is treated as non-interactive.
+func isInteractive(in io.Reader) bool {
+	f, ok := in.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// runTUIChat drives the agent through the bubbletea Model: a background
+// goroutine reads submitted input and calls RunStream, sending its
+// progress and result back into the program as messages, while
+// program.Run() owns the terminal until Ctrl+D quits it.
+func runTUIChat(cmd *cobra.Command, provider llm.Provider, registry *tools.Registry, h *history.History, guards agent.Guards) error {
+	ctx := cmd.Context()
+	submit := make(chan string, 1)
+	program := tea.NewProgram(ui.NewModel(submit), tea.WithAltScreen(), tea.WithContext(ctx))
+
+	renderer := &ui.TUIRenderer{Program: program}
+	approver := &ui.TUIApprover{Program: program}
+	ag := agent.New(provider, registry, h, systemPrompt, defaultMaxTokens, guards, defaultToolTimeout, approver)
+
+	go func() {
+		for input := range submit {
+			turnCtx, cancel := context.WithCancel(ctx)
+			ui.TurnStarted(program, cancel)
+			text, err := ag.RunStream(turnCtx, input, renderer)
+			cancel()
+			ui.TurnDone(program, text, err)
+		}
+	}()
+
+	_, err := program.Run()
+	close(submit)
 	return err
 }

@@ -6,6 +6,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	_ "github.com/reno/pico-code/internal/llm/anthropic"
+	_ "github.com/reno/pico-code/internal/llm/ollama"
 )
 
 func main() {

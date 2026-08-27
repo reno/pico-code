@@ -4,7 +4,29 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/reno/pico-code/internal/config"
 )
+
+// stubRunChat swaps the package-level runChat var for a stub that records
+// the resolved cfg instead of driving a real provider/agent turn, returning
+// a getter for it (valid only after Execute runs) and restoring the
+// original on cleanup — tests that only care about how flags/env resolve
+// into a Config use this so they never touch the network or block on
+// stdin.
+func stubRunChat(t *testing.T) func() *config.Config {
+	t.Helper()
+	var got *config.Config
+	orig := runChat
+	runChat = func(_ *cobra.Command, cfg *config.Config) error {
+		got = cfg
+		return nil
+	}
+	t.Cleanup(func() { runChat = orig })
+	return func() *config.Config { return got }
+}
 
 func TestChatHelpListsEveryFlag(t *testing.T) {
 	root := newRootCmd(func(string) string { return "" })
@@ -31,6 +53,7 @@ func TestChatHelpListsEveryFlag(t *testing.T) {
 }
 
 func TestChatProviderEnvFallback(t *testing.T) {
+	getCfg := stubRunChat(t)
 	env := map[string]string{"PICO_CODE_PROVIDER": "ollama"}
 	getenv := func(k string) string { return env[k] }
 
@@ -42,12 +65,13 @@ func TestChatProviderEnvFallback(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("chat returned error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "provider=ollama") {
-		t.Errorf("expected env fallback to select ollama provider, got: %s", buf.String())
+	if got := getCfg().Provider; got != config.ProviderOllama {
+		t.Errorf("Provider = %q, want env fallback to select %q", got, config.ProviderOllama)
 	}
 }
 
 func TestChatFlagOverridesEnv(t *testing.T) {
+	getCfg := stubRunChat(t)
 	env := map[string]string{"PICO_CODE_PROVIDER": "ollama"}
 	getenv := func(k string) string { return env[k] }
 
@@ -59,8 +83,8 @@ func TestChatFlagOverridesEnv(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("chat returned error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "provider=anthropic") {
-		t.Errorf("expected explicit flag to override env, got: %s", buf.String())
+	if got := getCfg().Provider; got != config.ProviderAnthropic {
+		t.Errorf("Provider = %q, want the explicit flag to override env and select %q", got, config.ProviderAnthropic)
 	}
 }
 
