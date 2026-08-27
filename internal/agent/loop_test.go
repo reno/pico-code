@@ -26,7 +26,14 @@ type scriptedProvider struct {
 
 func (s *scriptedProvider) Name() string { return "scripted" }
 
-func (s *scriptedProvider) Chat(_ context.Context, _ llm.Request) (*llm.Response, error) {
+func (s *scriptedProvider) Chat(ctx context.Context, _ llm.Request) (*llm.Response, error) {
+	// A real adapter checks ctx before/while talking to the network
+	// (CLAUDE.md invariant 6); mirroring that here is what lets a
+	// cancellation test observe Run exiting cleanly via this path rather
+	// than via scriptedProvider running out of scripted responses.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.calls >= len(s.responses) {
 		return nil, fmt.Errorf("scripted: no response scripted for call %d", s.calls+1)
 	}
@@ -113,7 +120,7 @@ func TestRunDrivesScriptedConversationWithParallelTools(t *testing.T) {
 	}}
 
 	h := history.New()
-	a := New(provider, reg, h, "you are a test agent", 1024, Guards{})
+	a := New(provider, reg, h, "you are a test agent", 1024, Guards{}, 0)
 
 	got, err := a.Run(context.Background(), "please help")
 	if err != nil {
@@ -175,7 +182,7 @@ func TestRunReturnsTextImmediatelyWhenNoToolCall(t *testing.T) {
 	}}
 
 	h := history.New()
-	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{})
+	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{}, 0)
 
 	got, err := a.Run(context.Background(), "hi")
 	if err != nil {
@@ -208,7 +215,7 @@ func TestRunTurnsUnknownToolIntoErrorResult(t *testing.T) {
 	}}
 
 	h := history.New()
-	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{})
+	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{}, 0)
 
 	if _, err := a.Run(context.Background(), "hi"); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -230,7 +237,7 @@ func TestRunTurnsUnknownToolIntoErrorResult(t *testing.T) {
 func TestRunPropagatesProviderError(t *testing.T) {
 	provider := &scriptedProvider{responses: nil}
 	h := history.New()
-	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{})
+	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{}, 0)
 
 	if _, err := a.Run(context.Background(), "hi"); err == nil {
 		t.Fatal("Run() error = nil, want the provider's error propagated")
@@ -249,12 +256,23 @@ func (echoTool) Run(_ context.Context, _ json.RawMessage) (string, error) { retu
 var _ tools.Tool = echoTool{}
 
 func toolCallResponse(id string) *llm.Response {
+	return toolCallResponseNamed(id, "echo_tool")
+}
+
+func toolCallResponseNamed(id, name string) *llm.Response {
 	return &llm.Response{
 		Message: llm.Message{
 			Role:   llm.RoleAssistant,
-			Blocks: []llm.Block{llm.ToolUse{ID: id, Name: "echo_tool", Input: json.RawMessage(`{}`)}},
+			Blocks: []llm.Block{llm.ToolUse{ID: id, Name: name, Input: json.RawMessage(`{}`)}},
 		},
 		StopReason: "tool_use",
+	}
+}
+
+func textResponse(text string) *llm.Response {
+	return &llm.Response{
+		Message:    llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.Text{Text: text}}},
+		StopReason: "end_turn",
 	}
 }
 
@@ -285,7 +303,7 @@ func TestRunStopsAtMaxTurnsGuard(t *testing.T) {
 	provider := &scriptedProvider{responses: []*llm.Response{toolCallResponse("call_1"), toolCallResponse("call_2")}}
 
 	h := history.New()
-	a := New(provider, reg, h, "", 1024, Guards{MaxTurns: 2})
+	a := New(provider, reg, h, "", 1024, Guards{MaxTurns: 2}, 0)
 
 	got, err := a.Run(context.Background(), "keep going forever")
 	if err != nil {
@@ -321,7 +339,7 @@ func TestRunStopsAtTokenBudgetGuard(t *testing.T) {
 	provider := &scriptedProvider{responses: []*llm.Response{round("call_1", 10), round("call_2", 10)}}
 
 	h := history.New()
-	a := New(provider, reg, h, "", 1024, Guards{TokenBudget: 15})
+	a := New(provider, reg, h, "", 1024, Guards{TokenBudget: 15}, 0)
 
 	got, err := a.Run(context.Background(), "keep going forever")
 	if err != nil {
@@ -359,7 +377,7 @@ func TestRunStopsAtWallClockGuard(t *testing.T) {
 	}}
 
 	h := history.New()
-	a := New(provider, reg, h, "", 1024, Guards{WallClock: 15 * time.Millisecond})
+	a := New(provider, reg, h, "", 1024, Guards{WallClock: 15 * time.Millisecond}, 0)
 
 	got, err := a.Run(context.Background(), "keep going forever")
 	if err != nil {
@@ -400,7 +418,7 @@ func TestRunStopsAtRepetitionGuard(t *testing.T) {
 	provider := &scriptedProvider{responses: []*llm.Response{identical("call_1"), identical("call_2"), identical("call_3")}}
 
 	h := history.New()
-	a := New(provider, reg, h, "", 1024, Guards{})
+	a := New(provider, reg, h, "", 1024, Guards{}, 0)
 
 	got, err := a.Run(context.Background(), "keep going forever")
 	if err != nil {
@@ -444,7 +462,7 @@ func TestRunDoesNotTripRepetitionGuardOnAlternatingCalls(t *testing.T) {
 	}}
 
 	h := history.New()
-	a := New(provider, reg, h, "", 1024, Guards{})
+	a := New(provider, reg, h, "", 1024, Guards{}, 0)
 
 	got, err := a.Run(context.Background(), "alternate")
 	if err != nil {
@@ -455,5 +473,162 @@ func TestRunDoesNotTripRepetitionGuardOnAlternatingCalls(t *testing.T) {
 	}
 	if provider.calls != 5 {
 		t.Errorf("provider was called %d times, want 5", provider.calls)
+	}
+}
+
+// panicTool always panics — it stands in for a broken tool implementation.
+type panicTool struct{}
+
+func (panicTool) Name() string            { return "panic_tool" }
+func (panicTool) Description() string     { return "a tool that always panics" }
+func (panicTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (panicTool) Run(_ context.Context, _ json.RawMessage) (string, error) {
+	panic("boom")
+}
+
+var _ tools.Tool = panicTool{}
+
+// TestRunRecoversFromPanickingTool is 4.3's AC for the panicking-tool case:
+// a valid paired result, and the loop continues.
+func TestRunRecoversFromPanickingTool(t *testing.T) {
+	reg := tools.NewRegistry()
+	if err := reg.Register(panicTool{}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	provider := &scriptedProvider{responses: []*llm.Response{
+		toolCallResponseNamed("call_1", "panic_tool"),
+		textResponse("recovered"),
+	}}
+
+	h := history.New()
+	a := New(provider, reg, h, "", 1024, Guards{}, 0)
+
+	got, err := a.Run(context.Background(), "call the panicking tool")
+	if err != nil {
+		t.Fatalf("Run() error = %v, want the loop to survive the panic and continue", err)
+	}
+	if got != "recovered" {
+		t.Errorf("Run() = %q, want %q", got, "recovered")
+	}
+	if err := h.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	result := h.Snapshot()[2].Blocks[0].(llm.ToolResult)
+	if !result.IsError {
+		t.Error("ToolResult.IsError = false, want true for a panicking tool")
+	}
+	if !strings.Contains(result.Content, "panicked") {
+		t.Errorf("ToolResult.Content = %q, want it to mention the panic", result.Content)
+	}
+}
+
+// hangingTool ignores ctx entirely and sleeps far longer than any test
+// timeout — a genuine hang, not just a slow call, so the only thing that
+// can end it is runTool giving up and moving on.
+type hangingTool struct{}
+
+func (hangingTool) Name() string            { return "hanging_tool" }
+func (hangingTool) Description() string     { return "a tool that ignores ctx and never returns in time" }
+func (hangingTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (hangingTool) Run(_ context.Context, _ json.RawMessage) (string, error) {
+	time.Sleep(200 * time.Millisecond)
+	return "too late", nil
+}
+
+var _ tools.Tool = hangingTool{}
+
+// TestRunTimesOutHangingTool is 4.3's AC for the hanging-tool case: a valid
+// paired result, and the loop continues, without waiting for the tool.
+func TestRunTimesOutHangingTool(t *testing.T) {
+	reg := tools.NewRegistry()
+	if err := reg.Register(hangingTool{}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	provider := &scriptedProvider{responses: []*llm.Response{
+		toolCallResponseNamed("call_1", "hanging_tool"),
+		textResponse("gave up waiting"),
+	}}
+
+	h := history.New()
+	a := New(provider, reg, h, "", 1024, Guards{}, 20*time.Millisecond)
+
+	start := time.Now()
+	got, err := a.Run(context.Background(), "call the hanging tool")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got != "gave up waiting" {
+		t.Errorf("Run() = %q, want %q", got, "gave up waiting")
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("Run() took %s, want well under the tool's 200ms sleep (the per-tool timeout must not block the loop)", elapsed)
+	}
+	if err := h.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	result := h.Snapshot()[2].Blocks[0].(llm.ToolResult)
+	if !result.IsError {
+		t.Error("ToolResult.IsError = false, want true for a timed-out tool")
+	}
+	if !strings.Contains(result.Content, "deadline exceeded") {
+		t.Errorf("ToolResult.Content = %q, want it to mention the timeout", result.Content)
+	}
+}
+
+// blockingTool is well-behaved: it blocks on ctx and returns as soon as ctx
+// is cancelled, closing started first so the test knows the tool is
+// actually in flight before it cancels.
+type blockingTool struct {
+	started chan struct{}
+}
+
+func (t *blockingTool) Name() string            { return "blocking_tool" }
+func (t *blockingTool) Description() string     { return "a tool that blocks until ctx is done" }
+func (t *blockingTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *blockingTool) Run(ctx context.Context, _ json.RawMessage) (string, error) {
+	close(t.started)
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+var _ tools.Tool = (*blockingTool)(nil)
+
+// TestRunHandlesCancellationMidTool is 4.3's AC for the cancelled-tool
+// case: a valid paired result, and the loop exits cleanly (Run returns the
+// cancellation error rather than hanging or corrupting history).
+func TestRunHandlesCancellationMidTool(t *testing.T) {
+	reg := tools.NewRegistry()
+	bt := &blockingTool{started: make(chan struct{})}
+	if err := reg.Register(bt); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	provider := &scriptedProvider{responses: []*llm.Response{toolCallResponseNamed("call_1", "blocking_tool")}}
+
+	h := history.New()
+	a := New(provider, reg, h, "", 1024, Guards{}, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-bt.started
+		cancel()
+	}()
+
+	_, err := a.Run(ctx, "call the blocking tool")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want it to wrap context.Canceled", err)
+	}
+	if err := h.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	result := h.Snapshot()[2].Blocks[0].(llm.ToolResult)
+	if !result.IsError {
+		t.Error("ToolResult.IsError = false, want true for a cancelled tool")
 	}
 }

@@ -42,20 +42,24 @@ const repetitionThreshold = 3
 // Agent drives one conversation: a provider to talk to, a tool registry to
 // satisfy its tool calls, and the history both read from and append to.
 type Agent struct {
-	provider  llm.Provider
-	tools     *tools.Registry
-	history   *history.History
-	system    string
-	maxTokens int
-	guards    Guards
+	provider    llm.Provider
+	tools       *tools.Registry
+	history     *history.History
+	system      string
+	maxTokens   int
+	guards      Guards
+	toolTimeout time.Duration
 }
 
 // New returns an Agent ready to run turns against provider, using registry
 // to execute any tool call it issues, appending to h. system and maxTokens
 // are sent on every Request the loop builds; guards bounds how long a
-// single Run can keep asking the provider for more tool calls.
-func New(provider llm.Provider, registry *tools.Registry, h *history.History, system string, maxTokens int, guards Guards) *Agent {
-	return &Agent{provider: provider, tools: registry, history: h, system: system, maxTokens: maxTokens, guards: guards}
+// single Run can keep asking the provider for more tool calls. toolTimeout
+// bounds a single tool call (0 = unlimited) — separate from guards because
+// it never stops the loop, only that one call, per CLAUDE.md invariant 3
+// ("even when a tool ... times out" it still gets a ToolResult).
+func New(provider llm.Provider, registry *tools.Registry, h *history.History, system string, maxTokens int, guards Guards, toolTimeout time.Duration) *Agent {
+	return &Agent{provider: provider, tools: registry, history: h, system: system, maxTokens: maxTokens, guards: guards, toolTimeout: toolTimeout}
 }
 
 // Run appends userInput to history as a user turn, then drives the
@@ -156,12 +160,54 @@ func (a *Agent) runTools(ctx context.Context, calls []llm.ToolUse) []llm.Block {
 	return results
 }
 
+// toolOutcome carries a.tools.Run's result across the goroutine boundary in
+// runTool.
+type toolOutcome struct {
+	out string
+	err error
+}
+
+// runTool executes one call and always produces a ToolResult — CLAUDE.md
+// invariant 3 holds "even when a tool panics, times out, is denied by the
+// user, or the name is unknown": each becomes ToolResult{IsError: true}
+// rather than a missing result or a crashed process.
+//
+// The tool runs in its own goroutine so a badly-behaved implementation that
+// ignores ctx (a genuine hang, not just a slow one) can't block this call
+// past toolTimeout or the caller's cancellation: runTool answers from
+// whichever of "the tool finished" or "the deadline arrived" happens first,
+// abandoning the goroutine in the latter case rather than waiting on it —
+// it may still be running when runTool returns, but its buffered result
+// channel means it will exit on its own once it does finish, not leak
+// forever.
 func (a *Agent) runTool(ctx context.Context, call llm.ToolUse) llm.Block {
-	out, err := a.tools.Run(ctx, call.Name, call.Input)
-	if err != nil {
-		return llm.ToolResult{ToolUseID: call.ID, Content: err.Error(), IsError: true}
+	toolCtx := ctx
+	if a.toolTimeout > 0 {
+		var cancel context.CancelFunc
+		toolCtx, cancel = context.WithTimeout(ctx, a.toolTimeout)
+		defer cancel()
 	}
-	return llm.ToolResult{ToolUseID: call.ID, Content: out, IsError: false}
+
+	done := make(chan toolOutcome, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- toolOutcome{err: fmt.Errorf("tool %q panicked: %v", call.Name, r)}
+			}
+		}()
+		out, err := a.tools.Run(toolCtx, call.Name, call.Input)
+		done <- toolOutcome{out: out, err: err}
+	}()
+
+	select {
+	case o := <-done:
+		if o.err != nil {
+			return llm.ToolResult{ToolUseID: call.ID, Content: o.err.Error(), IsError: true}
+		}
+		return llm.ToolResult{ToolUseID: call.ID, Content: o.out, IsError: false}
+	case <-toolCtx.Done():
+		return llm.ToolResult{ToolUseID: call.ID, Content: fmt.Sprintf("tool %q: %v", call.Name, toolCtx.Err()), IsError: true}
+	}
 }
 
 // callSignature builds a comparison key for a round's tool calls, in call
