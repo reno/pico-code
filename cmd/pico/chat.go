@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -356,6 +357,11 @@ func runTUIChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, r
 
 	go func() {
 		for input := range submit {
+			if name, arg, ok := slashCommand(input); ok {
+				ui.CommandOutput(program, runTUICommand(ag, h, sess, input, name, arg))
+				continue
+			}
+
 			turnCtx, cancel := context.WithCancel(ctx)
 			ui.TurnStarted(program, cancel)
 			text, err := ag.RunStream(turnCtx, input, renderer)
@@ -370,4 +376,19 @@ func runTUIChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, r
 	_, err := program.Run()
 	close(submit)
 	return err
+}
+
+// runTUICommand runs a parsed slash command and formats its output for the
+// TUI's transcript, prefixed with the command line itself (the plain
+// REPL's prompt naturally shows what was typed; the TUI doesn't echo user
+// input into its transcript at all, so a command needs to say what it is).
+// Split out from runTUIChat's driver goroutine so it's testable without a
+// running *tea.Program.
+func runTUICommand(ag *agent.Agent, h *history.History, sess *session, input, name, arg string) string {
+	var buf bytes.Buffer
+	_, _ = fmt.Fprintf(&buf, "> %s\n", input)
+	// bytes.Buffer.Write never errors, so handleCommand's error return
+	// (only ever a write failure) is unreachable here.
+	_, _ = handleCommand(&buf, ag, h, sess, name, arg)
+	return buf.String()
 }

@@ -24,3 +24,6 @@ explicitly manual: nothing here is exercised by `make test`.
 - [ ] Ctrl+D exits the program cleanly, including while a turn is in flight.
 - [ ] Resizing the terminal reflows the viewport and textarea without
       corrupting prior output.
+- [ ] `/usage`, `/new`, `/save <name>`, and `/load <name>` each show their
+      output in the scrollback, prefixed with the command line typed; `/new`
+      clears history, `/load` restores it.

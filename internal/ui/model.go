@@ -138,6 +138,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case turnDoneMsg:
 		m.finalizeTurn(msg.text, msg.err)
 		return m, nil
+	case commandOutputMsg:
+		m.completed += msg.text
+		m.refreshViewport()
+		return m, nil
 	case approvalRequestMsg:
 		m.approvalQueue = append(m.approvalQueue, approvalRequest{toolName: msg.toolName, preview: msg.preview, resp: msg.resp})
 		if m.approval == nil {

@@ -30,6 +30,7 @@ type (
 		text string
 		err  error
 	}
+	commandOutputMsg   struct{ text string }
 	approvalRequestMsg struct {
 		toolName string
 		input    json.RawMessage
@@ -144,4 +145,12 @@ func TurnStarted(program *tea.Program, cancel context.CancelFunc) {
 // TurnDone announces a turn's result, mirroring TurnStarted.
 func TurnDone(program *tea.Program, text string, err error) {
 	program.Send(turnDoneMsg{text: text, err: err})
+}
+
+// CommandOutput appends text (a slash command's result, e.g. /usage or
+// /save) to the transcript. Unlike a turn, a command never touches the
+// spinner/streaming state — cmd/pico's driver loop handles it inline,
+// without ever sending TurnStarted for it.
+func CommandOutput(program *tea.Program, text string) {
+	program.Send(commandOutputMsg{text: text})
 }

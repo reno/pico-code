@@ -99,7 +99,7 @@ either, so a credential never ends up in shell history.
 
 ## While chatting
 
-The plain (non-TUI) REPL understands a few commands:
+Both the plain REPL and the TUI understand the same commands:
 
 - `/usage` — cumulative and last-turn token counts
 - `/new` — start a fresh, unsaved conversation
@@ -107,18 +107,19 @@ The plain (non-TUI) REPL understands a few commands:
 - `/load <name>` — replace the current conversation with a saved session
 
 `--session <name>` does the same save/resume automatically, after every
-turn, in both the plain REPL and the TUI — kill the process mid-conversation
-and `--session <name>` again picks up where it left off.
+turn, in both — kill the process mid-conversation and `--session <name>`
+again picks up where it left off.
 
 `--tui` swaps the REPL for a full-screen interface (scrollback, a spinner
 while the model thinks, tool calls shown with a running/✓/✗ status,
 markdown rendering for finished replies, an approval modal for tools that
-need sign-off). It doesn't understand the slash commands above yet. Its
-Ctrl+C/Ctrl+D also differ from the plain REPL's on purpose: Ctrl+C there
-cancels only the in-flight turn and returns to the prompt, and Ctrl+D is
-the one that exits — a per-turn cancellation the plain REPL doesn't have,
-since its context is shared process-wide rather than derived fresh per
-turn.
+need sign-off). A command's output appears in the scrollback prefixed with
+the command line itself, since the TUI otherwise never echoes what you
+typed. Its Ctrl+C/Ctrl+D also differ from the plain REPL's on purpose:
+Ctrl+C there cancels only the in-flight turn and returns to the prompt,
+and Ctrl+D is the one that exits — a per-turn cancellation the plain REPL
+doesn't have, since its context is shared process-wide rather than derived
+fresh per turn.
 
 ## Safety
 
@@ -210,12 +211,9 @@ taught this codebase to be defensive.
 
 ## Known limitations
 
-Written down here rather than left silent, since a few flags and features
+Written down here rather than left silent, since a couple of features
 described above are further along in the library than in the CLI wiring:
 
-- **The TUI doesn't parse slash commands.** `/usage`, `/new`, `/save`,
-  `/load` only exist in the plain REPL; `--session` auto-save/resume works
-  in both.
 - **Anthropic's compaction context window is a constant** (200,000 tokens),
   not a real per-model value — there's no config field for it yet.
 

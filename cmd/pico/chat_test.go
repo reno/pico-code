@@ -314,3 +314,60 @@ func TestBuildRegistryRegistersRunCommandOnlyWhenAllowlisted(t *testing.T) {
 		t.Errorf("Get(\"run_command\") error = %v, want ErrToolNotFound when --allow-commands is empty", err)
 	}
 }
+
+// TestRunTUICommandUsage is the TUI counterpart of
+// TestUsageCommandReportsCumulativeAcrossTurns: /usage must work the same
+// way whether it's typed into the plain REPL or the TUI's textarea.
+func TestRunTUICommandUsage(t *testing.T) {
+	provider := &fakeChatProvider{reply: "ok"}
+	h := history.New()
+	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+	runTurn := newTurnRunner(&config.Config{Stream: true}, ag, io.Discard)
+	if err := runTurn(context.Background(), "hello"); err != nil {
+		t.Fatalf("runTurn() error = %v", err)
+	}
+
+	out := runTUICommand(ag, h, noSession(t), "/usage", "usage", "")
+
+	if !strings.Contains(out, "> /usage") {
+		t.Errorf("output = %q, want it to echo the command line", out)
+	}
+	if !strings.Contains(out, "1 turn") {
+		t.Errorf("output = %q, want it to report 1 completed turn", out)
+	}
+}
+
+// TestRunTUICommandNewSaveLoad is the TUI counterpart of
+// TestSessionCommandsNewSaveLoad.
+func TestRunTUICommandNewSaveLoad(t *testing.T) {
+	dir := t.TempDir()
+	sess, err := newSession(dir, "")
+	if err != nil {
+		t.Fatalf("newSession() error = %v", err)
+	}
+	h := history.New()
+	h.Append(llm.Message{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: "hello there"}}})
+	provider := &fakeChatProvider{reply: "reply"}
+	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+
+	saveOut := runTUICommand(ag, h, sess, "/save first", "save", "first")
+	if !strings.Contains(saveOut, `saved session "first"`) {
+		t.Errorf("save output = %q, want a save confirmation", saveOut)
+	}
+
+	newOut := runTUICommand(ag, h, sess, "/new", "new", "")
+	if !strings.Contains(newOut, "started a new, unsaved session") {
+		t.Errorf("new output = %q, want a /new confirmation", newOut)
+	}
+	if len(h.Snapshot()) != 0 {
+		t.Errorf("history has %d messages after /new, want 0", len(h.Snapshot()))
+	}
+
+	loadOut := runTUICommand(ag, h, sess, "/load first", "load", "first")
+	if !strings.Contains(loadOut, `loaded session "first"`) {
+		t.Errorf("load output = %q, want a load confirmation", loadOut)
+	}
+	if len(h.Snapshot()) == 0 {
+		t.Error("history is empty after /load, want the saved turn restored")
+	}
+}

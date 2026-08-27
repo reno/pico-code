@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -194,5 +195,26 @@ func TestModelEnterSubmitsInputOnlyWhenIdle(t *testing.T) {
 	}
 	if m.textarea.Value() != "" {
 		t.Errorf("textarea value after submit = %q, want it cleared", m.textarea.Value())
+	}
+}
+
+// TestModelCommandOutputAppendsToTranscriptWithoutChangingState proves a
+// slash command's output (sent via CommandOutput/commandOutputMsg) shows
+// up in the transcript without going through the turn state machine — no
+// spinner, no state change, since cmd/pico's driver never sends
+// turnStartedMsg for a command.
+func TestModelCommandOutputAppendsToTranscriptWithoutChangingState(t *testing.T) {
+	m := newTestModel()
+	if m.state != stateIdle {
+		t.Fatalf("initial state = %v, want stateIdle", m.state)
+	}
+
+	m = update(m, commandOutputMsg{text: "> /usage\ncumulative: 5 input, 2 output token(s)\n"})
+
+	if m.state != stateIdle {
+		t.Errorf("state after commandOutputMsg = %v, want it to stay stateIdle", m.state)
+	}
+	if !strings.Contains(m.completed, "cumulative: 5 input, 2 output token(s)") {
+		t.Errorf("completed = %q, want it to contain the command output", m.completed)
 	}
 }
