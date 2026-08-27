@@ -48,6 +48,7 @@ type Flags struct {
 	TUI         bool
 	LogLevel    string
 	NumCtx      int
+	AllowWrite  bool
 }
 
 // Config is the fully resolved, validated configuration for a chat session.
@@ -67,6 +68,10 @@ type Config struct {
 	// silently truncates context if this is left unset, so it always has an
 	// explicit value rather than an optional one the adapter might omit.
 	NumCtx int
+
+	// AllowWrite gates registering write_file: false by default, since it's
+	// the only built-in tool that mutates the workspace.
+	AllowWrite bool
 
 	// AnthropicAPIKey and OllamaHost come from the environment only; there
 	// is no flag for either, since committing a secret to a shell history
@@ -104,6 +109,7 @@ func Load(f Flags, getenv func(string) string) (*Config, error) {
 		TUI:             f.TUI,
 		LogLevel:        f.LogLevel,
 		NumCtx:          f.NumCtx,
+		AllowWrite:      f.AllowWrite,
 		AnthropicAPIKey: getenv("ANTHROPIC_API_KEY"),
 		OllamaHost:      getenv("OLLAMA_HOST"),
 	}, nil

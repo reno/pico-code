@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -746,5 +748,56 @@ func TestRunSkipsApprovalForToolsThatDontNeedIt(t *testing.T) {
 	}
 	if approver.asked {
 		t.Error("approver was consulted for a tool that doesn't implement ApprovalRequired")
+	}
+}
+
+// TestRunDeniedWriteFileLeavesFileByteIdentical is 5.4's AC exercised
+// end-to-end through the loop's approval path, using the real
+// tools.WriteFileTool rather than a fake.
+func TestRunDeniedWriteFileLeavesFileByteIdentical(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "existing.txt")
+	if err := os.WriteFile(path, []byte("original content"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	sandbox, err := tools.NewSandbox(root, nil)
+	if err != nil {
+		t.Fatalf("NewSandbox() error = %v", err)
+	}
+	writeTool, err := tools.NewWriteFileTool(sandbox)
+	if err != nil {
+		t.Fatalf("NewWriteFileTool() error = %v", err)
+	}
+	reg := tools.NewRegistry()
+	if err := reg.Register(writeTool); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	writeInput, _ := json.Marshal(tools.WriteFileInput{Path: "existing.txt", Content: "attacker-controlled overwrite"})
+	provider := &scriptedProvider{responses: []*llm.Response{
+		{
+			Message: llm.Message{
+				Role:   llm.RoleAssistant,
+				Blocks: []llm.Block{llm.ToolUse{ID: "call_1", Name: "write_file", Input: writeInput}},
+			},
+			StopReason: "tool_use",
+		},
+		textResponse("ok"),
+	}}
+
+	h := history.New()
+	a := New(provider, reg, h, "", 1024, Guards{}, 0, &fakeApprover{approve: false})
+
+	if _, err := a.Run(context.Background(), "overwrite the file"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(got) != "original content" {
+		t.Errorf("file contents = %q, want the original untouched after a denied approval", got)
 	}
 }

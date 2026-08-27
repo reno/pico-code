@@ -25,6 +25,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 		tui         bool
 		logLevel    string
 		numCtx      int
+		allowWrite  bool
 	}
 
 	cmd := &cobra.Command{
@@ -50,6 +51,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 				TUI:         flags.tui,
 				LogLevel:    flags.logLevel,
 				NumCtx:      flags.numCtx,
+				AllowWrite:  flags.allowWrite,
 			}, getenv)
 			if err != nil {
 				return fmt.Errorf("resolving config: %w", err)
@@ -71,6 +73,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 	f.BoolVar(&flags.tui, "tui", false, "use the bubbletea TUI instead of plain output")
 	f.StringVar(&flags.logLevel, "log-level", "info", "log level (debug|info|warn|error)")
 	f.IntVar(&flags.numCtx, "num-ctx", 4096, "context window size passed to Ollama's num_ctx (ignored by other providers)")
+	f.BoolVar(&flags.allowWrite, "allow-write", false, "register the write_file tool (off by default)")
 
 	return cmd
 }
