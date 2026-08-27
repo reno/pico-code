@@ -1,16 +1,21 @@
-// Package recordutil implements the RECORD=1 convention CLAUDE.md's
-// testing section describes: with RECORD=1 set and real credentials in the
-// environment, an adapter's test proxies one live exchange through a
-// Recorder that captures the raw request/response and writes them to disk
-// as a scrubbed golden fixture. Without RECORD=1 (the default, and the
-// only mode `make test` ever runs), nothing in this package is exercised —
-// tests replay already-recorded fixtures via httptest.Server instead, so
-// the suite stays offline and key-free.
+// Package recordutil holds the secret-redaction logic shared by two
+// things: the RECORD=1 convention CLAUDE.md's testing section describes
+// (with RECORD=1 set and real credentials in the environment, an adapter's
+// test proxies one live exchange through a Recorder that captures the raw
+// request/response and writes them to disk as a scrubbed golden fixture),
+// and --log-level=debug's request/response dump (9.2), which needs the
+// exact same guarantee — no credential ever reaches a fixture or a log
+// line. Without RECORD=1, the Recorder/Exchange half of this package is
+// never exercised — `make test` only replays already-recorded fixtures via
+// httptest.Server, so the suite stays offline and key-free.
 package recordutil
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"regexp"
@@ -90,4 +95,41 @@ func (r *Recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 		r.OnExchange(Exchange{RequestBody: reqBody, ResponseBody: respBody, StatusCode: resp.StatusCode})
 	}
 	return resp, nil
+}
+
+// maxDebugBodyBytes caps how much of a request/response body --log-level
+// debug prints — long enough to be useful, short enough that a large tool
+// result or file read doesn't flood the log.
+const maxDebugBodyBytes = 4000
+
+// Truncate caps s at max bytes, appending a marker if it was cut.
+func Truncate(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	return s[:limit] + "...(truncated)"
+}
+
+// LogJSON debug-logs v marshaled to JSON, scrubbed and truncated — the
+// request/response dump 9.2's AC calls for. It skips the marshal work
+// entirely when debug logging isn't enabled, so it's cheap to call
+// unconditionally on every request.
+func LogJSON(ctx context.Context, label string, v any, secrets ...string) {
+	if !slog.Default().Enabled(ctx, slog.LevelDebug) {
+		return
+	}
+	body, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	LogBytes(ctx, label, body, secrets...)
+}
+
+// LogBytes is LogJSON's counterpart for a caller that already has raw wire
+// bytes rather than a Go value to marshal.
+func LogBytes(ctx context.Context, label string, body []byte, secrets ...string) {
+	if !slog.Default().Enabled(ctx, slog.LevelDebug) {
+		return
+	}
+	slog.DebugContext(ctx, label, "body", Truncate(Scrub(string(body), secrets...), maxDebugBodyBytes))
 }

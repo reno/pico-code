@@ -2,7 +2,9 @@ package recordutil
 
 import (
 	"bytes"
+	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -69,6 +71,63 @@ func TestRecorderCapturesExchangeAndForwardsResponseUnchanged(t *testing.T) {
 	}
 	if captured.StatusCode != http.StatusOK {
 		t.Errorf("captured.StatusCode = %d, want 200", captured.StatusCode)
+	}
+}
+
+func TestTruncateLeavesShortStringsAlone(t *testing.T) {
+	if got := Truncate("short", 100); got != "short" {
+		t.Errorf("Truncate() = %q, want unchanged", got)
+	}
+}
+
+func TestTruncateCutsLongStrings(t *testing.T) {
+	got := Truncate(strings.Repeat("x", 100), 10)
+	if len(got) <= 10 {
+		t.Fatalf("Truncate() = %q, want it to still show it was cut (len %d)", got, len(got))
+	}
+	if !strings.HasPrefix(got, strings.Repeat("x", 10)) || !strings.Contains(got, "truncated") {
+		t.Errorf("Truncate() = %q, want the first 10 bytes followed by a truncation marker", got)
+	}
+}
+
+func TestLogJSONRedactsSecretsAndRespectsLevel(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	prevDefault := slog.Default()
+	slog.SetDefault(logger)
+	defer slog.SetDefault(prevDefault)
+
+	type payload struct {
+		APIKey string `json:"api_key"`
+	}
+	LogJSON(context.Background(), "test request", payload{APIKey: "sk-ant-verysecret123"})
+	if buf.Len() != 0 {
+		t.Errorf("LogJSON() wrote %q at Info level with debug disabled, want nothing", buf.String())
+	}
+
+	debugLogger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	slog.SetDefault(debugLogger)
+	LogJSON(context.Background(), "test request", payload{APIKey: "sk-ant-verysecret123"})
+
+	out := buf.String()
+	if strings.Contains(out, "verysecret123") {
+		t.Errorf("debug log = %q, still contains the secret", out)
+	}
+	if !strings.Contains(out, "test request") {
+		t.Errorf("debug log = %q, want the label present", out)
+	}
+}
+
+func TestLogBytesRedactsExplicitSecret(t *testing.T) {
+	var buf bytes.Buffer
+	prevDefault := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prevDefault)
+
+	LogBytes(context.Background(), "test response", []byte(`{"token":"plain-secret-value"}`), "plain-secret-value")
+
+	if strings.Contains(buf.String(), "plain-secret-value") {
+		t.Errorf("debug log = %q, still contains the exact secret", buf.String())
 	}
 }
 

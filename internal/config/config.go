@@ -25,6 +25,17 @@ const (
 	ToolsPrompted ToolsMode = "prompted"
 )
 
+// LogLevel selects the minimum severity slog emits.
+type LogLevel string
+
+// Supported log levels.
+const (
+	LogLevelDebug LogLevel = "debug"
+	LogLevelInfo  LogLevel = "info"
+	LogLevelWarn  LogLevel = "warn"
+	LogLevelError LogLevel = "error"
+)
+
 // ErrUnknownProvider is returned when --provider names a backend pico code
 // does not implement.
 var ErrUnknownProvider = errors.New("unknown provider")
@@ -32,6 +43,10 @@ var ErrUnknownProvider = errors.New("unknown provider")
 // ErrUnknownToolsMode is returned when --tools names a mode other than
 // native or prompted.
 var ErrUnknownToolsMode = errors.New("unknown tools mode")
+
+// ErrUnknownLogLevel is returned when --log-level names a level other than
+// debug, info, warn, or error.
+var ErrUnknownLogLevel = errors.New("unknown log level")
 
 // Flags carries the values collected from the chat subcommand's flags,
 // already resolved against any environment fallback (e.g. PICO_CODE_PROVIDER)
@@ -63,7 +78,7 @@ type Config struct {
 	Tools       ToolsMode
 	Stream      bool
 	TUI         bool
-	LogLevel    string
+	LogLevel    LogLevel
 
 	// NumCtx is the Ollama adapter's context window size (num_ctx). Ollama
 	// silently truncates context if this is left unset, so it always has an
@@ -102,6 +117,13 @@ func Load(f Flags, getenv func(string) string) (*Config, error) {
 		return nil, fmt.Errorf("%w: %q (want %q or %q)", ErrUnknownToolsMode, f.Tools, ToolsNative, ToolsPrompted)
 	}
 
+	logLevel := LogLevel(f.LogLevel)
+	switch logLevel {
+	case LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError:
+	default:
+		return nil, fmt.Errorf("%w: %q (want %q, %q, %q, or %q)", ErrUnknownLogLevel, f.LogLevel, LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError)
+	}
+
 	return &Config{
 		Provider:        provider,
 		Model:           f.Model,
@@ -112,7 +134,7 @@ func Load(f Flags, getenv func(string) string) (*Config, error) {
 		Tools:           tools,
 		Stream:          f.Stream,
 		TUI:             f.TUI,
-		LogLevel:        f.LogLevel,
+		LogLevel:        logLevel,
 		NumCtx:          f.NumCtx,
 		AllowWrite:      f.AllowWrite,
 		Session:         f.Session,

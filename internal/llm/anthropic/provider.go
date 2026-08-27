@@ -10,6 +10,7 @@ import (
 
 	"github.com/reno/pico-code/internal/config"
 	"github.com/reno/pico-code/internal/llm"
+	"github.com/reno/pico-code/internal/llm/recordutil"
 )
 
 func init() {
@@ -20,6 +21,9 @@ func init() {
 type Provider struct {
 	client sdk.Client
 	model  string
+	// apiKey is kept only so --log-level=debug can scrub it by exact value
+	// in addition to recordutil's generic sk-shaped-literal pattern.
+	apiKey string
 }
 
 // New constructs a Provider from resolved config. It is registered under
@@ -32,6 +36,7 @@ func New(cfg *config.Config) (llm.Provider, error) {
 	return &Provider{
 		client: sdk.NewClient(option.WithAPIKey(cfg.AnthropicAPIKey)),
 		model:  cfg.Model,
+		apiKey: cfg.AnthropicAPIKey,
 	}, nil
 }
 
@@ -49,9 +54,11 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request) (*llm.Response, er
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: %w", err)
 	}
+	recordutil.LogJSON(ctx, "anthropic: request", params, p.apiKey)
 	msg, err := p.client.Messages.New(ctx, params)
 	if err != nil {
 		return nil, mapError(err)
 	}
+	recordutil.LogJSON(ctx, "anthropic: response", msg, p.apiKey)
 	return fromResponse(msg)
 }

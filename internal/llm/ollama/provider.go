@@ -14,6 +14,7 @@ import (
 
 	"github.com/reno/pico-code/internal/config"
 	"github.com/reno/pico-code/internal/llm"
+	"github.com/reno/pico-code/internal/llm/recordutil"
 )
 
 func init() {
@@ -79,6 +80,8 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request) (*llm.Response, er
 		return nil, fmt.Errorf("ollama: marshal request: %w", err)
 	}
 
+	recordutil.LogBytes(ctx, "ollama: request", body)
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/api/chat", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("ollama: %w", err)
@@ -98,6 +101,7 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request) (*llm.Response, er
 	if res.StatusCode >= http.StatusBadRequest {
 		return nil, fmt.Errorf("ollama: request failed with status %d: %s", res.StatusCode, bytes.TrimSpace(respBody))
 	}
+	recordutil.LogBytes(ctx, "ollama: response", respBody)
 
 	normalized, err := normalizeToolCallArguments(respBody)
 	if err != nil {

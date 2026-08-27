@@ -13,6 +13,7 @@ import (
 	"github.com/ollama/ollama/api"
 
 	"github.com/reno/pico-code/internal/llm"
+	"github.com/reno/pico-code/internal/llm/recordutil"
 )
 
 // Stream sends req to /api/chat with streaming enabled and translates each
@@ -36,6 +37,8 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 	if err != nil {
 		return nil, fmt.Errorf("ollama: marshal request: %w", err)
 	}
+
+	recordutil.LogBytes(ctx, "ollama: stream request", body)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/api/chat", bytes.NewReader(body))
 	if err != nil {
@@ -106,6 +109,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 			}
 
 			if chunk.Done {
+				recordutil.LogBytes(ctx, "ollama: stream response", line)
 				send(llm.MessageDone{
 					StopReason: chunk.DoneReason,
 					Usage: estimateUsage(req, respText.String(), llm.Usage{

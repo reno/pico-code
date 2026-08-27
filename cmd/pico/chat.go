@@ -102,6 +102,10 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 // runChat is a package var so tests can substitute a stub instead of
 // driving a real provider/agent turn end to end.
 var runChat = func(cmd *cobra.Command, cfg *config.Config) error {
+	if err := setupLogging(cmd.ErrOrStderr(), cfg.LogLevel); err != nil {
+		return err
+	}
+
 	provider, err := llm.New(cfg)
 	if err != nil {
 		return fmt.Errorf("resolving provider: %w", err)

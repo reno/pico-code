@@ -106,6 +106,16 @@ func TestLoad(t *testing.T) {
 			getenv:  noEnv,
 			wantErr: ErrUnknownToolsMode,
 		},
+		{
+			name: "unknown log level",
+			flags: func() Flags {
+				f := baseFlags()
+				f.LogLevel = "verbose"
+				return f
+			}(),
+			getenv:  noEnv,
+			wantErr: ErrUnknownLogLevel,
+		},
 	}
 
 	for _, tt := range tests {

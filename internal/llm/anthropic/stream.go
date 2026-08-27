@@ -9,6 +9,7 @@ import (
 	sdk "github.com/anthropics/anthropic-sdk-go"
 
 	"github.com/reno/pico-code/internal/llm"
+	"github.com/reno/pico-code/internal/llm/recordutil"
 )
 
 // streamAccumulator tracks the per-block state needed to translate
@@ -29,7 +30,7 @@ func newStreamAccumulator() *streamAccumulator {
 }
 
 // handle translates one SSE event into zero or more canonical events.
-func (a *streamAccumulator) handle(event sdk.MessageStreamEventUnion) ([]llm.Event, error) {
+func (a *streamAccumulator) handle(ctx context.Context, event sdk.MessageStreamEventUnion) ([]llm.Event, error) {
 	switch event.Type {
 	case "message_start":
 		ms := event.AsMessageStart()
@@ -89,6 +90,10 @@ func (a *streamAccumulator) handle(event sdk.MessageStreamEventUnion) ([]llm.Eve
 		return nil, nil
 
 	case "message_stop":
+		recordutil.LogJSON(ctx, "anthropic: stream response", struct {
+			StopReason string    `json:"stop_reason"`
+			Usage      llm.Usage `json:"usage"`
+		}{a.stopReason, a.usage})
 		return []llm.Event{llm.MessageDone{StopReason: a.stopReason, Usage: a.usage}}, nil
 
 	default:
@@ -104,6 +109,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: %w", err)
 	}
+	recordutil.LogJSON(ctx, "anthropic: stream request", params, p.apiKey)
 
 	return llm.StreamEvents(ctx, func(send func(llm.Event) bool) {
 		stream := p.client.Messages.NewStreaming(ctx, params)
@@ -111,7 +117,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 
 		acc := newStreamAccumulator()
 		for stream.Next() {
-			events, err := acc.handle(stream.Current())
+			events, err := acc.handle(ctx, stream.Current())
 			if err != nil {
 				send(llm.Error{Err: fmt.Errorf("anthropic: %w", err)})
 				return
