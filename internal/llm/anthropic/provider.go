@@ -55,8 +55,3 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request) (*llm.Response, er
 	}
 	return fromResponse(msg)
 }
-
-// Stream is implemented in phase 6.2.
-func (p *Provider) Stream(_ context.Context, _ llm.Request) (<-chan llm.Event, error) {
-	return nil, errors.New("anthropic: streaming not implemented until phase 6.2")
-}
