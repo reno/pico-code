@@ -49,6 +49,12 @@ var ErrUnknownToolsMode = errors.New("unknown tools mode")
 // debug, info, warn, or error.
 var ErrUnknownLogLevel = errors.New("unknown log level")
 
+// ErrModelRequired is returned when --model is empty. Nothing downstream
+// defaults it, so an empty model would otherwise reach a provider adapter
+// and fail as an opaque transport error (a 404 from Anthropic, a connection
+// attempt to Ollama) instead of a clear message at startup.
+var ErrModelRequired = errors.New("model is required")
+
 // Flags carries the values collected from the chat subcommand's flags,
 // already resolved against any environment fallback (e.g. PICO_CODE_PROVIDER)
 // by the caller. Load only validates and fills in credentials.
@@ -144,6 +150,10 @@ func Load(f Flags, getenv func(string) string) (*Config, error) {
 	case ProviderAnthropic, ProviderOllama, ProviderOpenAI:
 	default:
 		return nil, fmt.Errorf("%w: %q (want %q, %q, or %q)", ErrUnknownProvider, f.Provider, ProviderAnthropic, ProviderOllama, ProviderOpenAI)
+	}
+
+	if f.Model == "" {
+		return nil, fmt.Errorf("%w: pass --model with an identifier for %q (e.g. a Claude model name for anthropic, or a locally pulled model tag for ollama)", ErrModelRequired, provider)
 	}
 
 	tools := ToolsMode(f.Tools)
