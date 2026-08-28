@@ -52,6 +52,9 @@ type Model struct {
 	spinner  spinner.Model
 	renderer *glamour.TermRenderer
 
+	bannerInfo BannerInfo
+	banner     string // rendered home screen, redrawn on resize
+
 	completed string // finalized, glamour-rendered transcript
 	liveText  strings.Builder
 	liveTools []toolBlock
@@ -66,7 +69,9 @@ type Model struct {
 }
 
 // NewModel returns a Model that sends submitted user input on submit.
-func NewModel(submit chan<- string) Model {
+// info is the home screen's content; the banner itself is rendered on the
+// first resize, since its frame has to be drawn to the terminal's width.
+func NewModel(submit chan<- string, info BannerInfo) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Ask pico code…"
 	ta.Focus()
@@ -77,10 +82,11 @@ func NewModel(submit chan<- string) Model {
 	sp.Spinner = spinner.Dot
 
 	return Model{
-		submit:   submit,
-		textarea: ta,
-		spinner:  sp,
-		viewport: viewport.New(80, 20),
+		submit:     submit,
+		textarea:   ta,
+		spinner:    sp,
+		viewport:   viewport.New(80, 20),
+		bannerInfo: info,
 	}
 }
 
@@ -200,6 +206,7 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) (Model, tea.Cmd) {
 	m.width = msg.Width
 	m.ready = true
 	m.textarea.SetWidth(msg.Width)
+	m.banner = Banner(m.bannerInfo, msg.Width)
 	m.viewport.Width = msg.Width
 	m.viewport.Height = msg.Height - m.textarea.Height() - 2
 	if r, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(msg.Width)); err == nil {
@@ -281,6 +288,7 @@ func (m Model) handleApprovalKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 // transcript plus whatever the in-progress turn has produced so far.
 func (m *Model) refreshViewport() {
 	var b strings.Builder
+	b.WriteString(m.banner)
 	b.WriteString(m.completed)
 	if m.liveText.Len() > 0 || len(m.liveTools) > 0 {
 		b.WriteString(m.liveText.String())

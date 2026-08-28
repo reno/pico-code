@@ -9,7 +9,7 @@ import (
 )
 
 func newTestModel() Model {
-	m := NewModel(make(chan string, 1))
+	m := NewModel(make(chan string, 1), BannerInfo{})
 	rm, _ := m.handleResize(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return rm
 }
@@ -179,7 +179,7 @@ func TestModelCtrlCCancelsTurnWithoutQuitting(t *testing.T) {
 
 func TestModelEnterSubmitsInputOnlyWhenIdle(t *testing.T) {
 	ch := make(chan string, 1)
-	m := NewModel(ch)
+	m := NewModel(ch, BannerInfo{})
 	m, _ = m.handleResize(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.textarea.SetValue("hello agent")
 

@@ -9,11 +9,14 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/user"
+	"strconv"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/reno/pico-code/internal/agent"
 	"github.com/reno/pico-code/internal/config"
@@ -23,6 +26,10 @@ import (
 	"github.com/reno/pico-code/internal/tools"
 	"github.com/reno/pico-code/internal/ui"
 )
+
+// version is stamped into the home screen's frame title. Bumped by hand;
+// there is no release pipeline to derive it from yet.
+const version = "v0.1.0"
 
 const (
 	systemPrompt       = "You are pico code, a terminal coding agent. Be direct and concise."
@@ -163,11 +170,17 @@ const (
 )
 
 func compactionPolicy(cfg *config.Config) agent.CompactionPolicy {
-	window := cfg.ContextWindow
+	return agent.CompactionPolicy{ContextWindow: contextWindow(cfg), TriggerFraction: compactionTriggerFraction, KeepTurns: compactionKeepTurns}
+}
+
+// contextWindow is the token budget compaction measures against: NumCtx
+// for Ollama, whose window is already explicit and required, and the
+// configured ContextWindow for every other provider.
+func contextWindow(cfg *config.Config) int {
 	if cfg.Provider == config.ProviderOllama {
-		window = cfg.NumCtx
+		return cfg.NumCtx
 	}
-	return agent.CompactionPolicy{ContextWindow: window, TriggerFraction: compactionTriggerFraction, KeepTurns: compactionKeepTurns}
+	return cfg.ContextWindow
 }
 
 // resolveProvider wraps provider with prompted-tools support when cfg.Tools
@@ -263,7 +276,74 @@ func runPlainChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider,
 		return sess.saveIfActive(h)
 	}
 
+	_, _ = fmt.Fprint(out, ui.Banner(bannerInfo(cfg, sess), terminalWidth(out)))
 	return runREPL(ctx, in, out, ag, h, sess, runTurn)
+}
+
+// bannerInfo projects the resolved config and on-disk sessions onto the
+// fields the home screen shows, so ui never has to import config, read the
+// filesystem, or look at the environment.
+func bannerInfo(cfg *config.Config, sess *session) ui.BannerInfo {
+	info := ui.BannerInfo{
+		Version:  version,
+		Greeting: ui.Mockery(),
+		Provider: string(cfg.Provider),
+		Model:    cfg.Model,
+		Usage:    fmt.Sprintf("0 / %s tokens", humanTokens(contextWindow(cfg))),
+	}
+	// The home screen shows the directory you launched from, which is what
+	// a shell prompt would show; cfg.Workspace is the tools' sandbox root
+	// and can differ from it.
+	wd, err := os.Getwd()
+	if err != nil {
+		wd = cfg.Workspace
+	}
+	info.Directory = tildeHome(wd)
+	if u, err := user.Current(); err == nil {
+		info.User = u.Username
+	}
+	if sess != nil {
+		info.Sessions = sess.recent(bannerSessionCount)
+	}
+	return info
+}
+
+// tildeHome abbreviates a leading home directory to "~", the way a shell
+// prompt does, so the path fits the home screen's column.
+func tildeHome(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || !strings.HasPrefix(path, home) {
+		return path
+	}
+	return "~" + strings.TrimPrefix(path, home)
+}
+
+// bannerSessionCount is how many recent sessions fit the home screen's
+// right column without pushing the box taller than the skull beside it.
+const bannerSessionCount = 4
+
+// terminalWidth reports out's width, falling back to 0 (which Banner
+// clamps to its minimum) when out is not a terminal — a pipe, or a test's
+// buffer.
+func terminalWidth(out io.Writer) int {
+	f, ok := out.(*os.File)
+	if !ok {
+		return 0
+	}
+	w, _, err := term.GetSize(int(f.Fd()))
+	if err != nil {
+		return 0
+	}
+	return w
+}
+
+// humanTokens renders a token count the way a context window is usually
+// quoted ("128k") rather than in full.
+func humanTokens(n int) string {
+	if n >= 1000 {
+		return fmt.Sprintf("%dk", n/1000)
+	}
+	return strconv.Itoa(n)
 }
 
 // newTurnRunner picks Run or RunStream per cfg.Stream, printing Run's
@@ -352,7 +432,7 @@ func isInteractive(in io.Reader) bool {
 func runTUIChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, registry *tools.Registry, h *history.History, guards agent.Guards, sess *session) error {
 	ctx := cmd.Context()
 	submit := make(chan string, 1)
-	program := tea.NewProgram(ui.NewModel(submit), tea.WithAltScreen(), tea.WithContext(ctx))
+	program := tea.NewProgram(ui.NewModel(submit, bannerInfo(cfg, sess)), tea.WithAltScreen(), tea.WithContext(ctx))
 
 	renderer := &ui.TUIRenderer{Program: program}
 	approver := &ui.TUIApprover{Program: program}

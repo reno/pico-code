@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/reno/pico-code/internal/history"
 )
@@ -76,4 +79,38 @@ func (s *session) saveIfActive(h *history.History) error {
 		return fmt.Errorf("saving session %q: %w", s.name, err)
 	}
 	return nil
+}
+
+// recent returns up to n saved session names, most recently modified
+// first. Errors are swallowed into an empty list: the home screen that
+// calls this must render even when the sessions directory is unreadable.
+func (s *session) recent(n int) []string {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return nil
+	}
+	type entry struct {
+		name string
+		mod  time.Time
+	}
+	var found []entry
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		found = append(found, entry{strings.TrimSuffix(e.Name(), ".json"), info.ModTime()})
+	}
+	sort.Slice(found, func(i, j int) bool { return found[i].mod.After(found[j].mod) })
+	if len(found) > n {
+		found = found[:n]
+	}
+	names := make([]string, 0, len(found))
+	for _, e := range found {
+		names = append(names, e.name)
+	}
+	return names
 }
