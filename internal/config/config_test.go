@@ -97,6 +97,16 @@ func TestLoad(t *testing.T) {
 			wantErr: ErrUnknownProvider,
 		},
 		{
+			name: "empty model",
+			flags: func() Flags {
+				f := baseFlags()
+				f.Model = ""
+				return f
+			}(),
+			getenv:  noEnv,
+			wantErr: ErrModelRequired,
+		},
+		{
 			name: "unknown tools mode",
 			flags: func() Flags {
 				f := baseFlags()
