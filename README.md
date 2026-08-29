@@ -99,7 +99,9 @@ either, so a credential never ends up in shell history.
 
 Both the plain REPL and the TUI understand the same commands:
 
-- `/usage` — cumulative and last-turn token counts
+- `/usage` — cumulative and last-turn token counts, plus an estimated USD
+  cost when the active model has a pricing entry (see below); Ollama always
+  shows $0, since it runs locally
 - `/new` — start a fresh, unsaved conversation
 - `/save [name]` — save the current conversation as a session
 - `/load <name>` — replace the current conversation with a saved session
@@ -107,6 +109,17 @@ Both the plain REPL and the TUI understand the same commands:
 `--session <name>` does the same save/resume automatically, after every
 turn, in both — kill the process mid-conversation and `--session <name>`
 again picks up where it left off.
+
+### Cost estimates
+
+`/usage`'s cost figures come from a small per-model pricing table checked
+into `internal/config/pricing.go` — snapshotted from published rates at
+some point in time, not fetched live. Prices change; treat the number as a
+budgeting estimate, never as a billing-accurate figure. A model with no
+entry in the table (a typo, a brand-new release, most non-Anthropic
+models) shows no cost line at all rather than a misleading `$0.00`.
+Ollama is the one exception: since it always runs locally, `/usage` always
+reports it as an explicit `$0.0000` instead of omitting the line.
 
 `--tui` swaps the REPL for a full-screen interface (scrollback, a spinner
 while the model thinks, tool calls shown with a running/✓/✗ status,

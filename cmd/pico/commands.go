@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/reno/pico-code/internal/agent"
+	"github.com/reno/pico-code/internal/config"
 	"github.com/reno/pico-code/internal/history"
 	"github.com/reno/pico-code/internal/llm"
 	"github.com/reno/pico-code/internal/tools"
@@ -104,8 +105,8 @@ func runHelpCommand(_ context.Context, out io.Writer, _ *agent.Agent, _ *history
 	return tw.Flush()
 }
 
-func runUsageCommand(_ context.Context, out io.Writer, ag *agent.Agent, _ *history.History, _ *session, _ string) error {
-	printUsage(out, ag)
+func runUsageCommand(_ context.Context, out io.Writer, ag *agent.Agent, _ *history.History, sess *session, _ string) error {
+	printUsage(out, ag, sess.model)
 	return nil
 }
 
@@ -232,7 +233,7 @@ func runCdCommand(_ context.Context, out io.Writer, ag *agent.Agent, _ *history.
 // ValidateModel's doc comment) and CLAUDE.md already treats a model's
 // context window as an explicit, user-set value (--context-window,
 // --num-ctx) rather than one inferred from the model name.
-func runModelCommand(ctx context.Context, out io.Writer, ag *agent.Agent, h *history.History, _ *session, arg string) error {
+func runModelCommand(ctx context.Context, out io.Writer, ag *agent.Agent, h *history.History, sess *session, arg string) error {
 	fields := strings.Fields(arg)
 	if len(fields) == 0 || len(fields) > 2 {
 		_, err := fmt.Fprintln(out, "usage: /model <name> [context-window]")
@@ -261,6 +262,7 @@ func runModelCommand(ctx context.Context, out io.Writer, ag *agent.Agent, h *his
 	}
 
 	switcher.SetModel(name)
+	sess.model = name
 	ag.SetCompactionPolicy(policy)
 
 	if policy.ContextWindow > 0 {
@@ -320,15 +322,43 @@ func runMcpCommand(ctx context.Context, out io.Writer, _ *agent.Agent, _ *histor
 	return tw.Flush()
 }
 
-func printUsage(out io.Writer, ag *agent.Agent) {
+// printUsage reports token counts, and — whenever a cost is displayable —
+// an estimated USD cost alongside them. Per 15.1's AC: a model with no
+// config.PriceFor entry (an unrecognized name, or a model from a provider
+// this table doesn't cover) omits the cost line entirely rather than
+// showing a misleading $0.00 or an error; Ollama, run locally, always
+// reports an explicit zero instead, since "no line" would misleadingly
+// read as "unknown" rather than "free."
+func printUsage(out io.Writer, ag *agent.Agent, model string) {
 	turns := ag.TurnUsages()
 	cumulative := ag.CumulativeUsage()
 	_, _ = fmt.Fprintf(out, "cumulative: %d input, %d output token(s) across %d turn(s)\n",
 		cumulative.InputTokens, cumulative.OutputTokens, len(turns))
-	if len(turns) > 0 {
-		last := turns[len(turns)-1]
-		_, _ = fmt.Fprintf(out, "last turn: %d input, %d output token(s)\n", last.InputTokens, last.OutputTokens)
+	if cost, ok := usageCost(ag, model, cumulative); ok {
+		_, _ = fmt.Fprintf(out, "cumulative cost: $%.4f (estimated — see README)\n", cost)
 	}
+	if len(turns) == 0 {
+		return
+	}
+	last := turns[len(turns)-1]
+	_, _ = fmt.Fprintf(out, "last turn: %d input, %d output token(s)\n", last.InputTokens, last.OutputTokens)
+	if cost, ok := usageCost(ag, model, last); ok {
+		_, _ = fmt.Fprintf(out, "last turn cost: $%.4f (estimated)\n", cost)
+	}
+}
+
+// usageCost returns u's estimated cost for model on ag's provider, and
+// whether that figure is displayable at all — see printUsage's doc
+// comment for the Ollama-vs-unpriced-model distinction.
+func usageCost(ag *agent.Agent, model string, u llm.Usage) (float64, bool) {
+	if ag.Provider().Name() == string(config.ProviderOllama) {
+		return 0, true
+	}
+	price, ok := config.PriceFor(model)
+	if !ok {
+		return 0, false
+	}
+	return price.Cost(u.InputTokens, u.OutputTokens, u.CacheWriteTokens, u.CacheReadTokens), true
 }
 
 // closestCommand returns the commandTable entry whose name is nearest to

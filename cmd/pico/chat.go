@@ -166,6 +166,7 @@ var runChat = func(cmd *cobra.Command, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	sess.model = cfg.Model
 
 	mcpServers, err := loadMCPServers(cfg.MCPConfig)
 	if err != nil {

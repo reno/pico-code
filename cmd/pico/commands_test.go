@@ -397,6 +397,89 @@ func TestModelCommandSwitchingSmallerWindowTriggersCompactionNextTurn(t *testing
 	}
 }
 
+// TestUsageCommandCostMatchesHandComputedFigure is 15.1's AC: a scripted
+// run's total matches a hand-computed figure to the cent. claude-sonnet-4-5
+// prices at $3.00/$15.00 per million input/output tokens; 100,000 of each
+// costs 100000*3/1e6 + 100000*15/1e6 = 0.3 + 1.5 = $1.8000 exactly.
+func TestUsageCommandCostMatchesHandComputedFigure(t *testing.T) {
+	provider := &fakeChatProvider{reply: "ok", usage: llm.Usage{InputTokens: 100_000, OutputTokens: 100_000}}
+	h := history.New()
+	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+	if _, err := ag.Run(context.Background(), "hi"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	sess := noSession(t)
+	sess.model = "claude-sonnet-4-5"
+
+	var out bytes.Buffer
+	if _, err := handleCommand(context.Background(), &out, ag, h, sess, "usage", ""); err != nil {
+		t.Fatalf("handleCommand(usage) error = %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "cumulative cost: $1.8000") {
+		t.Errorf("handleCommand(usage) output = %q, want it to contain the hand-computed cost $1.8000", got)
+	}
+}
+
+// TestUsageCommandOmitsCostForUnknownModel is 15.1's AC: an unknown model
+// shows no cost and raises no error.
+func TestUsageCommandOmitsCostForUnknownModel(t *testing.T) {
+	provider := &fakeChatProvider{reply: "ok", usage: llm.Usage{InputTokens: 100, OutputTokens: 100}}
+	h := history.New()
+	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+	if _, err := ag.Run(context.Background(), "hi"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	sess := noSession(t)
+	sess.model = "not-a-real-model"
+
+	var out bytes.Buffer
+	if _, err := handleCommand(context.Background(), &out, ag, h, sess, "usage", ""); err != nil {
+		t.Fatalf("handleCommand(usage) error = %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "cost") {
+		t.Errorf("handleCommand(usage) output = %q, want no cost line for a model with no pricing entry", got)
+	}
+	if !strings.Contains(got, "cumulative: 100 input, 100 output") {
+		t.Errorf("handleCommand(usage) output = %q, want token counts shown regardless of pricing", got)
+	}
+}
+
+// fakeOllamaProvider is fakeChatProvider with Name() overridden to
+// "ollama", so /usage's Ollama-reports-zero branch (15.1's AC) can be
+// exercised without a real Ollama backend.
+type fakeOllamaProvider struct {
+	*fakeChatProvider
+}
+
+func (f *fakeOllamaProvider) Name() string { return "ollama" }
+
+// TestUsageCommandOllamaReportsZeroCost is 15.1's AC: Ollama reports zero
+// — an explicit $0.0000, not an omitted line, since Ollama is a known,
+// supported provider that simply has no per-token price, unlike a model
+// this table has never heard of.
+func TestUsageCommandOllamaReportsZeroCost(t *testing.T) {
+	provider := &fakeOllamaProvider{fakeChatProvider: &fakeChatProvider{reply: "ok", usage: llm.Usage{InputTokens: 100, OutputTokens: 100}}}
+	h := history.New()
+	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+	if _, err := ag.Run(context.Background(), "hi"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	sess := noSession(t)
+	sess.model = "qwen3:8b"
+
+	var out bytes.Buffer
+	if _, err := handleCommand(context.Background(), &out, ag, h, sess, "usage", ""); err != nil {
+		t.Fatalf("handleCommand(usage) error = %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "cumulative cost: $0.0000") {
+		t.Errorf("handleCommand(usage) output = %q, want an explicit $0.0000 for Ollama", got)
+	}
+}
+
 func TestLevenshtein(t *testing.T) {
 	tests := []struct {
 		a, b string

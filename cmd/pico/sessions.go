@@ -15,15 +15,19 @@ import (
 // session tracks which on-disk file (if any) the current conversation
 // should be saved to after each turn — set at startup by --session, and
 // changeable at runtime by /save and /load. It also carries mcp, the MCP
-// server lifecycle manager (13.3): both are per-chat-session mutable state
-// threaded through every slash command the same way, so mcp lives here
-// rather than widening every commandSpec.run signature for the one
-// command that needs it. mcp is nil when no MCP servers are configured, or
-// in a test session built without one — /mcp handles that explicitly.
+// server lifecycle manager (13.3), and model, the active model name
+// (15.1) kept in sync by /model: all three are per-chat-session mutable
+// state threaded through every slash command the same way, so they live
+// here rather than widening every commandSpec.run signature for the one
+// command that needs each. mcp is nil when no MCP servers are configured,
+// or in a test session built without one — /mcp handles that explicitly.
+// model is "" the same way — /usage's cost lookup already treats an
+// unpriced (or unknown) model as "no cost," never an error.
 type session struct {
-	dir  string
-	name string
-	mcp  *mcpManager
+	dir   string
+	name  string
+	mcp   *mcpManager
+	model string
 }
 
 // newSession returns a session rooted at dir (created if missing), named

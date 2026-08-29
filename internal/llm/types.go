@@ -67,9 +67,16 @@ type Message struct {
 }
 
 // Usage reports token counts for a single request/response exchange.
+// CacheWriteTokens and CacheReadTokens are 0 for a provider or request that
+// never touched prompt caching (every non-Anthropic adapter, and any
+// Anthropic request before 15.2's cache_control breakpoints existed) —
+// there is no separate "unsupported" state to distinguish from "not used
+// this time."
 type Usage struct {
-	InputTokens  int
-	OutputTokens int
+	InputTokens      int
+	OutputTokens     int
+	CacheWriteTokens int
+	CacheReadTokens  int
 }
 
 // ToolDefinition is the provider-agnostic shape of a tool advertised in a

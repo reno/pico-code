@@ -26,6 +26,7 @@ import (
 type fakeChatProvider struct {
 	reply          string
 	disallowStream bool
+	usage          llm.Usage
 }
 
 func (f *fakeChatProvider) Name() string { return "fake" }
@@ -34,6 +35,7 @@ func (f *fakeChatProvider) Chat(context.Context, llm.Request) (*llm.Response, er
 	return &llm.Response{
 		Message:    llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.Text{Text: f.reply}}},
 		StopReason: "end_turn",
+		Usage:      f.usage,
 	}, nil
 }
 
