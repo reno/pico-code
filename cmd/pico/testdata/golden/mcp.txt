@@ -1,0 +1,7 @@
+no MCP servers configured
+---
+weather  connected  2 tool(s)
+broken   failed     mcp: "broken": start: fork/exec /definitely/does/not/exist/pico-code-test-binary: no such file or directory
+---
+weather  connected  2 tool(s)
+broken   failed     mcp: "broken": start: fork/exec /definitely/does/not/exist/pico-code-test-binary: no such file or directory

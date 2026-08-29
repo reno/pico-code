@@ -14,10 +14,16 @@ import (
 
 // session tracks which on-disk file (if any) the current conversation
 // should be saved to after each turn — set at startup by --session, and
-// changeable at runtime by /save and /load.
+// changeable at runtime by /save and /load. It also carries mcp, the MCP
+// server lifecycle manager (13.3): both are per-chat-session mutable state
+// threaded through every slash command the same way, so mcp lives here
+// rather than widening every commandSpec.run signature for the one
+// command that needs it. mcp is nil when no MCP servers are configured, or
+// in a test session built without one — /mcp handles that explicitly.
 type session struct {
 	dir  string
 	name string
+	mcp  *mcpManager
 }
 
 // newSession returns a session rooted at dir (created if missing), named

@@ -120,6 +120,12 @@ func (c *Client) Call(ctx context.Context, tool string, arguments json.RawMessag
 	return &result, nil
 }
 
+// Pid returns the server process's OS process ID, so a caller responsible
+// for shutdown lifecycle (cmd/pico's /mcp manager and its tests) can
+// verify a process is actually gone after Close, rather than just trusting
+// Close returned.
+func (c *Client) Pid() int { return c.cmd.Process.Pid }
+
 // Close terminates the server process and waits for it to exit.
 func (c *Client) Close() error {
 	_ = c.stdin.Close()

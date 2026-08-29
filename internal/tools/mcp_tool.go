@@ -48,7 +48,16 @@ func NewMCPTool(client mcpCaller, server string, info mcp.ToolInfo) *MCPTool {
 // that would otherwise happen (CLAUDE.md's "duplicate name is always a
 // wiring mistake") on whatever the final, namespaced name turns out to
 // be.
-func (t *MCPTool) Name() string { return fmt.Sprintf("mcp__%s__%s", t.server, t.remoteName) }
+func (t *MCPTool) Name() string { return MCPToolName(t.server, t.remoteName) }
+
+// MCPToolName returns the namespaced Registry name an MCPTool for
+// server/remoteName uses. Exported so a caller managing a server's own
+// lifecycle (reconnecting it, tearing it down) can compute the same name
+// to unregister a stale entry, without duplicating the "mcp__server__tool"
+// format and risking it drifting from Name's.
+func MCPToolName(server, remoteName string) string {
+	return fmt.Sprintf("mcp__%s__%s", server, remoteName)
+}
 
 // Description implements Tool.
 func (t *MCPTool) Description() string { return t.description }

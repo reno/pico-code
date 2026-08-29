@@ -46,6 +46,18 @@ func (r *Registry) Register(t Tool) error {
 	return nil
 }
 
+// Unregister removes the tool registered under name, if any — a no-op
+// otherwise, since a caller reconnecting a server that never successfully
+// registered any tools shouldn't have to check first. Exists for a
+// server's own lifecycle owner (reconnect, teardown) to clear its stale
+// entries before registering fresh ones; nothing in the built-in tools
+// needs it.
+func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.tools, name)
+}
+
 // Get returns the tool registered under name.
 func (r *Registry) Get(name string) (Tool, error) {
 	r.mu.RLock()

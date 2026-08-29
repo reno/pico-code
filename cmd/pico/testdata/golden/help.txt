@@ -8,3 +8,4 @@
 /exit                           save the session and exit, like Ctrl+D
 /cd <path>                      re-root the workspace sandbox
 /model <name> [context-window]  switch models, validated against the active provider
+/mcp [reconnect <name>]         list configured MCP servers and their status, or reconnect one

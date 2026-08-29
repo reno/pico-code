@@ -65,6 +65,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 		session       string
 		allowCommands []string
 		contextWindow int
+		mcpConfig     string
 	}
 
 	cmd := &cobra.Command{
@@ -99,6 +100,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 				Session:       flags.session,
 				AllowCommands: flags.allowCommands,
 				ContextWindow: flags.contextWindow,
+				MCPConfig:     flags.mcpConfig,
 			}, getenv)
 			if err != nil {
 				return fmt.Errorf("resolving config: %w", err)
@@ -124,6 +126,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 	f.StringVar(&flags.session, "session", "", "name a session to resume or start; saved after every turn")
 	f.StringSliceVar(&flags.allowCommands, "allow-commands", nil, "comma-separated binary allowlist for run_command; registers the tool only if non-empty")
 	f.IntVar(&flags.contextWindow, "context-window", defaultContextWindow, "context window size compaction measures usage against (ignored by Ollama, which uses --num-ctx instead)")
+	f.StringVar(&flags.mcpConfig, "mcp-config", "", `path to a JSON file listing MCP servers, shaped {"mcpServers": {name: {command, args, env}}}`)
 
 	return cmd
 }
@@ -163,6 +166,14 @@ var runChat = func(cmd *cobra.Command, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+
+	mcpServers, err := loadMCPServers(cfg.MCPConfig)
+	if err != nil {
+		return err
+	}
+	sess.mcp = newMCPManager(cmd.Context(), registry, mcpServers, mcpDiscoverTimeout)
+	defer sess.mcp.shutdown()
+
 	h, err := sess.loadOrCreateHistory()
 	if err != nil {
 		return err

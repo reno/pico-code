@@ -53,6 +53,7 @@ func init() {
 		{name: "exit", summary: "save the session and exit, like Ctrl+D", run: runExitCommand},
 		{name: "cd", args: "<path>", summary: "re-root the workspace sandbox", run: runCdCommand},
 		{name: "model", args: "<name> [context-window]", summary: "switch models, validated against the active provider", run: runModelCommand},
+		{name: "mcp", args: "[reconnect <name>]", summary: "list configured MCP servers and their status, or reconnect one", run: runMcpCommand},
 	}
 }
 
@@ -270,6 +271,53 @@ func runModelCommand(ctx context.Context, out io.Writer, ag *agent.Agent, h *his
 	}
 	_, err := fmt.Fprintf(out, "switched model to %s\n", name)
 	return err
+}
+
+// runMcpCommand lists configured MCP servers and their status (connected
+// with a tool count, or failed with the error), or — given "reconnect
+// <name>" — re-runs discovery for just that server first. sess.mcp is nil
+// whenever --mcp-config named no servers (or wasn't passed at all), which
+// this reports the same way as "servers configured but none reachable"
+// would: there's nothing more a user needs to distinguish between the two.
+func runMcpCommand(ctx context.Context, out io.Writer, _ *agent.Agent, _ *history.History, sess *session, arg string) error {
+	if fields := strings.Fields(arg); len(fields) > 0 {
+		if sess.mcp == nil {
+			_, err := fmt.Fprintln(out, "no MCP servers configured")
+			return err
+		}
+		if fields[0] != "reconnect" || len(fields) != 2 {
+			_, err := fmt.Fprintln(out, "usage: /mcp [reconnect <name>]")
+			return err
+		}
+		if err := sess.mcp.reconnect(ctx, fields[1]); err != nil {
+			_, werr := fmt.Fprintf(out, "reconnect failed: %v\n", err)
+			return werr
+		}
+	}
+
+	if sess.mcp == nil {
+		_, err := fmt.Fprintln(out, "no MCP servers configured")
+		return err
+	}
+	statuses := sess.mcp.statuses()
+	if len(statuses) == 0 {
+		_, err := fmt.Fprintln(out, "no MCP servers configured")
+		return err
+	}
+
+	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	for _, s := range statuses {
+		if s.connected {
+			if _, err := fmt.Fprintf(tw, "%s\tconnected\t%d tool(s)\n", s.name, s.toolCount); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := fmt.Fprintf(tw, "%s\tfailed\t%v\n", s.name, s.err); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
 }
 
 func printUsage(out io.Writer, ag *agent.Agent) {

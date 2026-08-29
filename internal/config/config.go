@@ -68,6 +68,7 @@ type Flags struct {
 	Session       string
 	AllowCommands []string
 	ContextWindow int
+	MCPConfig     string
 }
 
 // Config is the fully resolved, validated configuration for a chat session.
@@ -107,6 +108,12 @@ type Config struct {
 	// explicit, required value, so compaction reuses it rather than
 	// tracking a second number that could drift from it.
 	ContextWindow int
+
+	// MCPConfig is a path to a JSON file listing MCP servers to connect
+	// to at startup, in the same {"mcpServers": {name: {command, args,
+	// env}}} shape most existing MCP clients already use; empty means no
+	// MCP servers are configured.
+	MCPConfig string
 
 	// AnthropicAPIKey and OllamaHost come from the environment only; there
 	// is no flag for either, since committing a secret to a shell history
@@ -163,6 +170,7 @@ func Load(f Flags, getenv func(string) string) (*Config, error) {
 		Session:         f.Session,
 		AllowCommands:   f.AllowCommands,
 		ContextWindow:   f.ContextWindow,
+		MCPConfig:       f.MCPConfig,
 		AnthropicAPIKey: getenv("ANTHROPIC_API_KEY"),
 		OllamaHost:      getenv("OLLAMA_HOST"),
 		OpenAIAPIKey:    getenv("OPENAI_API_KEY"),
