@@ -12,4 +12,4 @@ lint:
 	golangci-lint run
 
 run:
-	go run ./cmd/pico chat --provider=ollama
+	go run ./cmd/pico chat --provider=ollama --model=qwen2.5-coder:7b --tui

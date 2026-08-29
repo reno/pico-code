@@ -5,12 +5,6 @@ A small CLI AI agent written in Go. One agent loop, two LLM backends —
 (local) — and a handful of sandboxed tools (read a file, list a directory, run
 an allowlisted command, write a file behind a flag).
 
-This project exists to work through the real engineering problems of
-building an agent — tool-call normalization across providers, streaming,
-context management, cancellation, safety — not to ship a product. If you're
-reading the source alongside this README, `.claude/CLAUDE.md` is the
-project's own working spec and is worth a read.
-
 ## Quickstart
 
 Requires Go 1.26+.
