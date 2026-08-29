@@ -13,7 +13,13 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 )
+
+// userPromptStyle labels a submitted message in the transcript, mirroring
+// the "You" convention other chat UIs use so a submitted turn doesn't read
+// as indistinguishable from the assistant's reply that follows it.
+var userPromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true)
 
 // sessionState is the TUI's coarse state machine: idle waits for input,
 // streaming/toolRunning reflect where the current turn is, and approval
@@ -290,7 +296,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		select {
 		case m.submit <- input:
+			m.completed += userPromptStyle.Render("You") + "\n" + input + "\n\n"
 			m.textarea.Reset()
+			m.refreshViewport()
 		default:
 		}
 		return m, nil

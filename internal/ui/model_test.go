@@ -250,6 +250,9 @@ func TestModelEnterSubmitsInputOnlyWhenIdle(t *testing.T) {
 	if m.textarea.Value() != "" {
 		t.Errorf("textarea value after submit = %q, want it cleared", m.textarea.Value())
 	}
+	if !strings.Contains(m.completed, "hello agent") {
+		t.Errorf("completed = %q, want it to contain the submitted message", m.completed)
+	}
 }
 
 // TestModelStatusLineTracksElapsedAndTokens is 10.1's AC: a scripted
