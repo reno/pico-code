@@ -26,7 +26,15 @@ import (
 // machinery needed here for that half of the job.
 const parseErrorToolName = "__prompted_parse_error__"
 
-var fencedJSONRe = regexp.MustCompile("(?s)```(?:json)?\\s*\\n?(.*?)\\n?```")
+// fencedJSONRe matches a fence labeled "json" or left unlabeled, requiring
+// a real line break right after the label. The looser "\s*\n?" this
+// replaced accepted any other label too (the "\n?" made the break
+// optional, so e.g. "plaintext" right after the backticks was silently
+// absorbed into the capture instead of rejecting the match) — a model's
+// genuine final answer wrapped in an unrelated ```plaintext or ```python
+// fence was misread as a failed tool call, spawning a bogus "tool not
+// found" round-trip.
+var fencedJSONRe = regexp.MustCompile("(?s)```(?:json)?[ \\t]*\\r?\\n(.*?)\\n?```")
 
 // Provider wraps inner to add prompted tool-calling.
 type Provider struct {

@@ -82,6 +82,18 @@ func TestChatParsesFencedToolCall(t *testing.T) {
 			wantStop: "end_turn",
 		},
 		{
+			// Regression: a real answer fenced with an unrelated language
+			// label used to be silently absorbed as if it were a ```json
+			// block, producing a bogus parse-error ToolUse instead of
+			// passing the answer through untouched.
+			name:     "non-json fence: genuine answer, not a tool call attempt",
+			respText: "```plaintext\nthe quick brown zebra juggles 42 lime-green kazoos.\n```",
+			want: []llm.Block{
+				llm.Text{Text: "```plaintext\nthe quick brown zebra juggles 42 lime-green kazoos.\n```"},
+			},
+			wantStop: "end_turn",
+		},
+		{
 			name:     "trailing prose: fence extracted, surrounding text kept",
 			respText: "Let me check that.\n```json\n{\"tool\":\"get_weather\",\"input\":{\"location\":\"Paris\"}}\n```\nOne moment please.",
 			want: []llm.Block{
