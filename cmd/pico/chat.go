@@ -15,6 +15,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
@@ -119,7 +120,13 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 // runChat is a package var so tests can substitute a stub instead of
 // driving a real provider/agent turn end to end.
 var runChat = func(cmd *cobra.Command, cfg *config.Config) error {
-	if err := setupLogging(cmd.ErrOrStderr(), cfg.LogLevel); err != nil {
+	// The TUI shares stderr with the alt-screen terminal, so a routine
+	// info-level line (e.g. "ollama: context window configured") printed
+	// before program.Run() takes over flashes onto the screen as stray
+	// text. Default to a quieter level for --tui unless the caller asked
+	// for a specific one explicitly.
+	logLevel := effectiveLogLevel(cfg, cmd.Flags().Changed("log-level"))
+	if err := setupLogging(cmd.ErrOrStderr(), logLevel); err != nil {
 		return err
 	}
 
@@ -168,6 +175,17 @@ const (
 	compactionTriggerFraction = 0.75
 	compactionKeepTurns       = 6
 )
+
+// effectiveLogLevel is the level setupLogging actually uses: cfg.LogLevel,
+// except a TUI session with no explicit --log-level defaults to warn, since
+// stderr shares the alt-screen terminal and a routine info line would flash
+// onto the screen as stray text before program.Run() takes it over.
+func effectiveLogLevel(cfg *config.Config, logLevelFlagChanged bool) config.LogLevel {
+	if cfg.TUI && !logLevelFlagChanged {
+		return config.LogLevelWarn
+	}
+	return cfg.LogLevel
+}
 
 func compactionPolicy(cfg *config.Config) agent.CompactionPolicy {
 	return agent.CompactionPolicy{ContextWindow: contextWindow(cfg), TriggerFraction: compactionTriggerFraction, KeepTurns: compactionKeepTurns}
@@ -432,7 +450,14 @@ func isInteractive(in io.Reader) bool {
 func runTUIChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, registry *tools.Registry, h *history.History, guards agent.Guards, sess *session) error {
 	ctx := cmd.Context()
 	submit := make(chan string, 1)
-	program := tea.NewProgram(ui.NewModel(submit, bannerInfo(cfg, sess)), tea.WithAltScreen(), tea.WithContext(ctx))
+	// Resolved here, before tea.Program takes the terminal into raw mode:
+	// querying the background color once bubbletea owns stdin races with
+	// its input reader and leaks stray escape bytes onto the screen.
+	glamourStyle := "light"
+	if lipgloss.HasDarkBackground() {
+		glamourStyle = "dark"
+	}
+	program := tea.NewProgram(ui.NewModel(submit, bannerInfo(cfg, sess), glamourStyle), tea.WithAltScreen(), tea.WithContext(ctx))
 
 	renderer := &ui.TUIRenderer{Program: program}
 	approver := &ui.TUIApprover{Program: program}

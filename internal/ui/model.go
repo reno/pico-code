@@ -55,8 +55,9 @@ type Model struct {
 	spinner  spinner.Model
 	renderer *glamour.TermRenderer
 
-	bannerInfo BannerInfo
-	banner     string // rendered home screen, redrawn on resize
+	bannerInfo   BannerInfo
+	banner       string // rendered home screen, redrawn on resize
+	glamourStyle string // "dark" or "light", resolved once before the program starts
 
 	completed string // finalized, glamour-rendered transcript
 	liveText  string // in-progress text, appended per textDeltaMsg
@@ -81,7 +82,12 @@ type Model struct {
 // NewModel returns a Model that sends submitted user input on submit.
 // info is the home screen's content; the banner itself is rendered on the
 // first resize, since its frame has to be drawn to the terminal's width.
-func NewModel(submit chan<- string, info BannerInfo) Model {
+// glamourStyle is "dark" or "light", resolved by the caller *before*
+// bubbletea takes over the terminal: querying the background color from
+// inside the running program (glamour.WithAutoStyle's default behavior)
+// races with bubbletea's own raw-mode input reader and leaks stray escape
+// bytes onto the screen. An empty glamourStyle defaults to "dark".
+func NewModel(submit chan<- string, info BannerInfo, glamourStyle string) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Ask pico code…"
 	ta.Focus()
@@ -91,13 +97,18 @@ func NewModel(submit chan<- string, info BannerInfo) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
+	if glamourStyle == "" {
+		glamourStyle = "dark"
+	}
+
 	return Model{
-		submit:     submit,
-		textarea:   ta,
-		spinner:    sp,
-		viewport:   viewport.New(80, 20),
-		bannerInfo: info,
-		wordRand:   rand.New(rand.NewSource(time.Now().UnixNano())),
+		submit:       submit,
+		textarea:     ta,
+		spinner:      sp,
+		viewport:     viewport.New(80, 20),
+		bannerInfo:   info,
+		glamourStyle: glamourStyle,
+		wordRand:     rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -235,7 +246,7 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) (Model, tea.Cmd) {
 	m.banner = Banner(m.bannerInfo, msg.Width)
 	m.viewport.Width = msg.Width
 	m.viewport.Height = msg.Height - m.textarea.Height() - 2
-	if r, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(msg.Width)); err == nil {
+	if r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(m.glamourStyle), glamour.WithWordWrap(msg.Width)); err == nil {
 		m.renderer = r
 	}
 	m.refreshViewport()

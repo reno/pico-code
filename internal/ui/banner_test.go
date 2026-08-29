@@ -138,7 +138,7 @@ func TestMockeryReturnsAKnownName(t *testing.T) {
 }
 
 func TestModelRendersBannerAfterResize(t *testing.T) {
-	m := NewModel(make(chan string, 1), sampleInfo())
+	m := NewModel(make(chan string, 1), sampleInfo(), "dark")
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	if !strings.Contains(updated.View(), "Welcome back, meatbag!") {
 		t.Error("View() should show the banner once the width is known")

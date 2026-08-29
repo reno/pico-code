@@ -15,9 +15,38 @@ import (
 )
 
 func newTestModel() Model {
-	m := NewModel(make(chan string, 1), BannerInfo{})
+	m := NewModel(make(chan string, 1), BannerInfo{}, "dark")
 	rm, _ := m.handleResize(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return rm
+}
+
+// TestNewModelDefaultsEmptyGlamourStyleToDark documents the fallback for
+// callers that don't resolve a style themselves.
+func TestNewModelDefaultsEmptyGlamourStyleToDark(t *testing.T) {
+	m := NewModel(make(chan string, 1), BannerInfo{}, "")
+	if m.glamourStyle != "dark" {
+		t.Errorf("glamourStyle = %q, want the \"dark\" fallback for an empty style", m.glamourStyle)
+	}
+}
+
+// TestHandleResizeUsesResolvedStyleNotAutoDetect is a regression test: the
+// renderer used to be built with glamour.WithAutoStyle(), which queries the
+// terminal's background color at render time. That query races with
+// bubbletea's own raw-mode input reader once the program has taken over the
+// terminal, leaking stray escape bytes onto the screen on every resize.
+// handleResize must build the renderer from the style resolved once at
+// NewModel time instead, for both possible values.
+func TestHandleResizeUsesResolvedStyleNotAutoDetect(t *testing.T) {
+	for _, style := range []string{"dark", "light"} {
+		m := NewModel(make(chan string, 1), BannerInfo{}, style)
+		updated, _ := m.handleResize(tea.WindowSizeMsg{Width: 80, Height: 24})
+		if updated.renderer == nil {
+			t.Errorf("style %q: renderer is nil after handleResize, want glamour.WithStandardStyle to succeed", style)
+		}
+		if updated.glamourStyle != style {
+			t.Errorf("style %q: glamourStyle = %q after resize, want it unchanged", style, updated.glamourStyle)
+		}
+	}
 }
 
 func update(m Model, msg tea.Msg) Model {
@@ -204,7 +233,7 @@ func TestModelCtrlCCancelsTurnWithoutQuitting(t *testing.T) {
 
 func TestModelEnterSubmitsInputOnlyWhenIdle(t *testing.T) {
 	ch := make(chan string, 1)
-	m := NewModel(ch, BannerInfo{})
+	m := NewModel(ch, BannerInfo{}, "dark")
 	m, _ = m.handleResize(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.textarea.SetValue("hello agent")
 

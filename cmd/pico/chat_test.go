@@ -372,6 +372,32 @@ func TestRunTUICommandNewSaveLoad(t *testing.T) {
 	}
 }
 
+// TestEffectiveLogLevelQuietsTUIWithoutExplicitFlag is a regression test:
+// stderr shares the TUI's alt-screen terminal, so an info-level line
+// printed before program.Run() takes over used to flash onto the screen as
+// stray text (e.g. "ollama: context window configured"). --tui should
+// default to a quieter level unless the caller passed --log-level.
+func TestEffectiveLogLevelQuietsTUIWithoutExplicitFlag(t *testing.T) {
+	got := effectiveLogLevel(&config.Config{TUI: true, LogLevel: config.LogLevelInfo}, false)
+	if got != config.LogLevelWarn {
+		t.Errorf("effectiveLogLevel(TUI, unset flag) = %q, want %q", got, config.LogLevelWarn)
+	}
+}
+
+func TestEffectiveLogLevelRespectsExplicitFlagEvenInTUI(t *testing.T) {
+	got := effectiveLogLevel(&config.Config{TUI: true, LogLevel: config.LogLevelDebug}, true)
+	if got != config.LogLevelDebug {
+		t.Errorf("effectiveLogLevel(TUI, explicit flag) = %q, want the explicitly requested %q", got, config.LogLevelDebug)
+	}
+}
+
+func TestEffectiveLogLevelUnchangedForPlainMode(t *testing.T) {
+	got := effectiveLogLevel(&config.Config{TUI: false, LogLevel: config.LogLevelInfo}, false)
+	if got != config.LogLevelInfo {
+		t.Errorf("effectiveLogLevel(plain) = %q, want cfg.LogLevel (%q) unmodified", got, config.LogLevelInfo)
+	}
+}
+
 func TestCompactionPolicyUsesContextWindowForNonOllamaProviders(t *testing.T) {
 	got := compactionPolicy(&config.Config{Provider: config.ProviderAnthropic, ContextWindow: 123_456, NumCtx: 4096})
 	if got.ContextWindow != 123_456 {
