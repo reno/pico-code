@@ -16,10 +16,42 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// userPromptStyle labels a submitted message in the transcript, mirroring
-// the "You" convention other chat UIs use so a submitted turn doesn't read
-// as indistinguishable from the assistant's reply that follows it.
-var userPromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true)
+// userLineStyle marks a submitted message in the transcript and the input
+// textbox itself as the user's own text: a gray field with white text, so a
+// submitted turn reads as visually distinct from the assistant's reply that
+// follows it.
+var userLineStyle = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("15"))
+
+// statusLineStyle colors the turn status line (spinner + word + counters)
+// shown while a turn is in flight.
+var statusLineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ADFF2F"))
+
+// spinnerStyle bolds the spinner glyph on top of statusLineStyle's color, so
+// the arc's strokes read heavier than the status text next to it.
+var spinnerStyle = statusLineStyle.Bold(true)
+
+// statusParenStyle mutes the parenthesized elapsed-time/tokens/interrupt-key
+// part of the status line, so only the turn word carries the accent color.
+var statusParenStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+
+// rotatingSpinner is a growing/shrinking arc chasing itself around a
+// circle — segments of a ring in visible motion rather than a static glyph
+// swap.
+var rotatingSpinner = spinner.Spinner{
+	Frames: []string{"◜", "◠", "◝", "◞", "◡", "◟"},
+	FPS:    time.Second / 8, //nolint:mnd
+}
+
+// dot styles color the status marker printed before every message and
+// action in the transcript: white for a message (user or assistant), gray
+// while an action is still running, green once it succeeds, red once it
+// fails.
+var (
+	dotMessageStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	dotPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	dotSuccessStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	dotErrorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+)
 
 // sessionState is the TUI's coarse state machine: idle waits for input,
 // streaming/toolRunning reflect where the current turn is, and approval
@@ -96,12 +128,29 @@ type Model struct {
 func NewModel(submit chan<- string, info BannerInfo, glamourStyle string) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Ask pico code…"
+	ta.SetPromptFunc(2, func(lineIdx int) string {
+		if lineIdx == 0 {
+			return "> "
+		}
+		return ""
+	})
 	ta.Focus()
 	ta.ShowLineNumbers = false
 	ta.SetHeight(3)
+	ta.FocusedStyle.Prompt = userLineStyle
+	ta.FocusedStyle.Text = userLineStyle
+	ta.FocusedStyle.CursorLine = userLineStyle
+	ta.FocusedStyle.EndOfBuffer = userLineStyle
+	ta.FocusedStyle.Placeholder = userLineStyle
+	ta.BlurredStyle.Prompt = userLineStyle
+	ta.BlurredStyle.Text = userLineStyle
+	ta.BlurredStyle.CursorLine = userLineStyle
+	ta.BlurredStyle.EndOfBuffer = userLineStyle
+	ta.BlurredStyle.Placeholder = userLineStyle
 
 	sp := spinner.New()
-	sp.Spinner = spinner.Dot
+	sp.Spinner = rotatingSpinner
+	sp.Style = spinnerStyle
 
 	if glamourStyle == "" {
 		glamourStyle = "dark"
@@ -241,7 +290,7 @@ func (m *Model) finalizeTurn(text string, err error) {
 				rendered = out
 			}
 		}
-		m.completed += rendered
+		m.completed += dotMessageStyle.Render("●") + " " + strings.TrimLeft(rendered, "\n")
 	}
 	m.liveText = ""
 	m.liveTools = nil
@@ -296,7 +345,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		select {
 		case m.submit <- input:
-			m.completed += userPromptStyle.Render("You") + "\n" + input + "\n\n"
+			m.completed += userLineStyle.Render(padLines("> "+input, m.width)) + "\n\n"
 			m.textarea.Reset()
 			m.refreshViewport()
 		default:
@@ -340,6 +389,22 @@ func (m Model) handleApprovalKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+// padLines right-pads every line of s with spaces out to w display cells, so
+// a background color applied to the result fills the full line width rather
+// than stopping at the last visible character.
+func padLines(s string, w int) string {
+	if w <= 0 {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if gap := w - lipgloss.Width(line); gap > 0 {
+			lines[i] = line + strings.Repeat(" ", gap)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // refreshViewport rebuilds the viewport's content from the finalized
 // transcript plus whatever the in-progress turn has produced so far.
 func (m *Model) refreshViewport() {
@@ -351,14 +416,17 @@ func (m *Model) refreshViewport() {
 		b.WriteString("\n")
 	}
 	for _, tb := range m.liveTools {
+		dot := dotPendingStyle.Render("●")
 		icon := "⏳"
 		switch tb.status {
 		case "ok":
+			dot = dotSuccessStyle.Render("●")
 			icon = "✓"
 		case "error":
+			dot = dotErrorStyle.Render("●")
 			icon = "✗"
 		}
-		fmt.Fprintf(&b, "%s %s\n", icon, tb.name)
+		fmt.Fprintf(&b, "%s %s %s\n", dot, icon, tb.name)
 	}
 	if m.err != nil {
 		fmt.Fprintf(&b, "\nerror: %v\n", m.err)
@@ -376,11 +444,36 @@ func (m Model) View() string {
 		return m.viewport.View() + "\n" + m.approvalModalView()
 	}
 
-	status := "> "
+	status := ""
 	if m.state != stateIdle {
-		status = m.spinner.View() + " " + m.statusText()
+		status = m.spinner.View() + " " + m.styledStatusText()
 	}
-	return m.viewport.View() + "\n" + status + "\n" + m.textarea.View()
+	return m.viewport.View() + "\n" + status + "\n" + padTextareaView(m.textarea.View(), m.width)
+}
+
+// padTextareaView tops up every line of the textarea's rendered view with
+// gray-background spaces out to width w. In placeholder mode, the
+// component's own inner viewport already pads short lines out to its
+// declared width, but with plain, unstyled spaces — the tail of the
+// placeholder line reads as a bare gap instead of gray. Any literal
+// trailing spaces are stripped and rebuilt with userLineStyle so the whole
+// line, not just its text, carries the background.
+func padTextareaView(view string, w int) string {
+	if w <= 0 {
+		return view
+	}
+	lines := strings.Split(view, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimRight(line, " ")
+		spaces := len(line) - len(trimmed)
+		if gap := w - lipgloss.Width(trimmed); gap > spaces {
+			spaces = gap
+		}
+		if spaces > 0 {
+			lines[i] = trimmed + userLineStyle.Render(strings.Repeat(" ", spaces))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // statusText renders the turn status line: a word describing what's
@@ -388,6 +481,15 @@ func (m Model) View() string {
 // streamed so far, and the key that interrupts it.
 func (m Model) statusText() string {
 	return fmt.Sprintf("%s… (%ds · ↑ %s tokens · esc to interrupt)", m.turnWord(), m.turnElapsed, formatTokenCount(m.turnTokens))
+}
+
+// styledStatusText renders statusText's content with the parenthesized
+// elapsed-time/tokens/interrupt-key part muted to gray, so only the turn
+// word carries the status line's accent color.
+func (m Model) styledStatusText() string {
+	word := statusLineStyle.Render(m.turnWord() + "…")
+	rest := fmt.Sprintf(" (%ds · ↑ %s tokens · esc to interrupt)", m.turnElapsed, formatTokenCount(m.turnTokens))
+	return word + statusParenStyle.Render(rest)
 }
 
 func (m Model) turnWord() string {
@@ -401,7 +503,7 @@ func (m Model) turnWord() string {
 
 // wordRotationTicks is how many once-per-second turnTickMsgs pass between
 // word rotations — a few seconds, per 10.2, long enough to read.
-const wordRotationTicks = 3
+const wordRotationTicks = 6
 
 // turnWords is the vocabulary the status line's word is drawn from while a
 // turn is in flight — deliberately whimsical, since it stands in for real

@@ -113,7 +113,7 @@ func Banner(info BannerInfo, width int) string {
 		}
 	}
 
-	frame := lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	frame := lipgloss.NewStyle().Foreground(lipgloss.Color("#ADFF2F"))
 	bar := frame.Render("│")
 
 	var b strings.Builder
@@ -154,7 +154,7 @@ func topBorder(version string, inner int, frame lipgloss.Style) string {
 	if fill < 0 {
 		return frame.Render("╭" + strings.Repeat("─", inner) + "╮")
 	}
-	name := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render("pico code")
+	name := lipgloss.NewStyle().Foreground(lipgloss.Color("#ADFF2F")).Bold(true).Render("pico code")
 	if version != "" {
 		name += lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(" " + version)
 	}
@@ -189,11 +189,14 @@ func leftColumn(info BannerInfo, w int) []cell {
 func rightColumn(info BannerInfo, w int) []cell {
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	faint := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	green := lipgloss.NewStyle().Foreground(lipgloss.Color("#ADFF2F"))
 
 	out := []cell{
 		{},
+		{text: "  Tips for getting started", style: green},
 		{text: "  type /help to see all commands", style: dim},
-		{text: "  " + strings.Repeat("─", maxInt(w-4, 1)), style: faint},
+		{text: "  " + strings.Repeat("─", maxInt(w-4, 1)), style: green},
+		{text: "  Last sessions", style: green},
 	}
 
 	if len(info.Sessions) == 0 {
