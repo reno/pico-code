@@ -56,7 +56,7 @@ type Model struct {
 	banner     string // rendered home screen, redrawn on resize
 
 	completed string // finalized, glamour-rendered transcript
-	liveText  strings.Builder
+	liveText  string // in-progress text, appended per textDeltaMsg
 	liveTools []toolBlock
 	cancel    context.CancelFunc
 
@@ -112,13 +112,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case turnStartedMsg:
 		m.state = stateStreaming
 		m.cancel = msg.cancel
-		m.liveText.Reset()
+		m.liveText = ""
 		m.liveTools = nil
 		m.err = nil
 		m.refreshViewport()
 		return m, m.spinner.Tick
 	case textDeltaMsg:
-		m.liveText.WriteString(msg.text)
+		m.liveText += msg.text
 		m.refreshViewport()
 		return m, nil
 	case toolStartedMsg:
@@ -196,7 +196,7 @@ func (m *Model) finalizeTurn(text string, err error) {
 		}
 		m.completed += rendered
 	}
-	m.liveText.Reset()
+	m.liveText = ""
 	m.liveTools = nil
 	m.refreshViewport()
 	m.textarea.Focus()
@@ -290,8 +290,8 @@ func (m *Model) refreshViewport() {
 	var b strings.Builder
 	b.WriteString(m.banner)
 	b.WriteString(m.completed)
-	if m.liveText.Len() > 0 || len(m.liveTools) > 0 {
-		b.WriteString(m.liveText.String())
+	if len(m.liveText) > 0 || len(m.liveTools) > 0 {
+		b.WriteString(m.liveText)
 		b.WriteString("\n")
 	}
 	for _, tb := range m.liveTools {

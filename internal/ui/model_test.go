@@ -36,7 +36,7 @@ func TestModelStateTransitionsIdleStreamingToolIdle(t *testing.T) {
 	if m.state != stateStreaming {
 		t.Fatalf("after textDeltaMsg state = %v, want stateStreaming", m.state)
 	}
-	if got := m.liveText.String(); got != "hello" {
+	if got := m.liveText; got != "hello" {
 		t.Errorf("liveText = %q, want %q", got, "hello")
 	}
 
@@ -56,6 +56,25 @@ func TestModelStateTransitionsIdleStreamingToolIdle(t *testing.T) {
 	}
 	if m.cancel != nil {
 		t.Error("cancel should be cleared once the turn is done")
+	}
+}
+
+// TestModelAccumulatesMultipleTextDeltasAcrossSeparateUpdateCalls is a
+// regression test for a real streaming crash: liveText used to be a
+// strings.Builder value field, and Update has a value receiver, so each
+// message (exactly like bubbletea's real dispatch, mirrored by the update()
+// helper) runs against a fresh copy of Model. A Builder panics if written
+// to from more than one copy of the struct it lives in — which is exactly
+// what any turn streaming more than one text chunk did.
+func TestModelAccumulatesMultipleTextDeltasAcrossSeparateUpdateCalls(t *testing.T) {
+	m := newTestModel()
+	m = update(m, turnStartedMsg{cancel: func() {}})
+	m = update(m, textDeltaMsg{text: "hel"})
+	m = update(m, textDeltaMsg{text: "lo "})
+	m = update(m, textDeltaMsg{text: "world"})
+
+	if got := m.liveText; got != "hello world" {
+		t.Fatalf("liveText = %q, want %q", got, "hello world")
 	}
 }
 
