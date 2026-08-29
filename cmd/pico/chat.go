@@ -285,6 +285,35 @@ func buildRegistry(cfg *config.Config) (*tools.Registry, error) {
 	return registry, nil
 }
 
+// subAgentToolNames are the tools a sub-agent is allowed to call. Deliberately
+// read-only: run_command and write_file need interactive approval, but a
+// sub-agent runs under agent.AutoApprove (there's no clean way to surface an
+// approval prompt from inside a nested tool call), so including either here
+// would silently bypass CLAUDE.md's approval-per-call rule.
+var subAgentToolNames = []string{"read_file", "list_dir"}
+
+// wireSubAgent registers a sub_agent tool into registry once ag exists,
+// giving it the same provider and a restricted, read-only tool set so a
+// sub-agent's own budget is carved out of ag's configured Guards. It has to
+// run after agent.New rather than inside buildRegistry: the sub-agent tool
+// needs a live *agent.Agent to read Guards()/CumulativeUsage() from, and
+// building that Agent needs the registry to already exist.
+func wireSubAgent(registry *tools.Registry, provider llm.Provider, ag *agent.Agent) error {
+	var allowed []tools.Tool
+	for _, name := range subAgentToolNames {
+		t, err := registry.Get(name)
+		if err != nil {
+			continue // not registered in this session (e.g. an empty test registry)
+		}
+		allowed = append(allowed, t)
+	}
+	sa, err := agent.NewSubAgentTool(provider, allowed, systemPrompt, defaultMaxTokens, defaultToolTimeout, ag)
+	if err != nil {
+		return err
+	}
+	return registry.Register(sa)
+}
+
 // runPlainChat drives the agent through ui.PlainRenderer. Piped/non-TTY
 // stdin (the common case for scripting and for 7.1's AC) is read in full as
 // one message and answered once; a TTY gets a minimal read-eval-print loop.
@@ -294,6 +323,9 @@ func runPlainChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider,
 		approver = agent.ConsoleApprover{In: cmd.InOrStdin(), Out: cmd.OutOrStdout()}
 	}
 	ag := agent.New(provider, registry, h, systemPrompt, defaultMaxTokens, guards, defaultToolTimeout, approver)
+	if err := wireSubAgent(registry, provider, ag); err != nil {
+		return err
+	}
 	ag.SetCompactionPolicy(compactionPolicy(cfg))
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
@@ -499,6 +531,9 @@ func runTUIChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, r
 	renderer := &ui.TUIRenderer{Program: program}
 	approver := &ui.TUIApprover{Program: program}
 	ag := agent.New(provider, registry, h, systemPrompt, defaultMaxTokens, guards, defaultToolTimeout, approver)
+	if err := wireSubAgent(registry, provider, ag); err != nil {
+		return err
+	}
 	ag.SetCompactionPolicy(compactionPolicy(cfg))
 
 	go func() {

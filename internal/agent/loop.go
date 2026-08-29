@@ -41,8 +41,9 @@ type Agent struct {
 	toolTimeout time.Duration
 	approver    Approver
 
-	turnUsages []llm.Usage
-	compaction CompactionPolicy
+	turnUsages       []llm.Usage
+	compaction       CompactionPolicy
+	lastGuardTripped bool
 }
 
 // New returns an Agent ready to run turns against provider, using registry
@@ -60,6 +61,7 @@ func New(provider llm.Provider, registry *tools.Registry, h *history.History, sy
 // either exit, so history always satisfies CLAUDE.md invariant 3.
 func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 	a.maybeCompact(ctx)
+	a.lastGuardTripped = false
 	a.history.Append(llm.Message{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: userInput}}})
 
 	rs := &roundState{start: time.Now()}
@@ -82,6 +84,7 @@ func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 // happens after a round's events finish, not during them.
 func (a *Agent) RunStream(ctx context.Context, userInput string, renderer ui.Renderer) (string, error) {
 	a.maybeCompact(ctx)
+	a.lastGuardTripped = false
 	a.history.Append(llm.Message{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: userInput}}})
 
 	reporter, _ := renderer.(ui.ToolStatusReporter)
@@ -149,6 +152,7 @@ func (a *Agent) runRound(ctx context.Context, resp *llm.Response, rs *roundState
 	totalTokens := rs.usage.InputTokens + rs.usage.OutputTokens
 	if reason, tripped := a.guardTripped(rs.turns, totalTokens, time.Since(rs.start), rs.repeatStreak); tripped {
 		a.turnUsages = append(a.turnUsages, rs.usage)
+		a.lastGuardTripped = true
 		return a.stopWithExplanation(reason), true
 	}
 	return "", false
@@ -183,6 +187,23 @@ func (a *Agent) Provider() llm.Provider {
 // directly rather than through a ToolUse block.
 func (a *Agent) Tools() *tools.Registry {
 	return a.tools
+}
+
+// Guards returns the guard configuration this Agent enforces, for a caller
+// (the sub-agent tool) that builds a nested Agent and needs to carve a
+// smaller budget out of this one's.
+func (a *Agent) Guards() Guards {
+	return a.guards
+}
+
+// GuardTripped reports whether the most recent Run or RunStream call ended
+// because a guard tripped (max turns, token budget, wall clock, or
+// repetition) rather than the provider finishing with no further tool
+// calls to make. The sub-agent tool uses this to tell a guard trip apart
+// from a normal completion, since both return a non-empty string and a nil
+// error from Run.
+func (a *Agent) GuardTripped() bool {
+	return a.lastGuardTripped
 }
 
 func (a *Agent) guardTripped(turns, totalTokens int, elapsed time.Duration, repeatStreak int) (string, bool) {

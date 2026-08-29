@@ -22,13 +22,29 @@ import (
 )
 
 // scriptedProvider returns responses in order, one per Chat call — the
-// "scripted fake provider" 4.1's AC calls for.
+// "scripted fake provider" 4.1's AC calls for. mu guards calls/responses so
+// the fixture is also safe for a sub-agent test that calls Chat from
+// several goroutines concurrently (via runTools' errgroup) against the
+// same scriptedProvider instance — a real provider client is safe for that
+// already; this fake wasn't until it needed to stand in for one here.
 type scriptedProvider struct {
+	mu        sync.Mutex
 	responses []*llm.Response
 	calls     int
 }
 
 func (s *scriptedProvider) Name() string { return "scripted" }
+
+func (s *scriptedProvider) next() (*llm.Response, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.calls >= len(s.responses) {
+		return nil, fmt.Errorf("scripted: no response scripted for call %d", s.calls+1)
+	}
+	resp := s.responses[s.calls]
+	s.calls++
+	return resp, nil
+}
 
 func (s *scriptedProvider) Chat(ctx context.Context, _ llm.Request) (*llm.Response, error) {
 	// A real adapter checks ctx before/while talking to the network
@@ -38,12 +54,7 @@ func (s *scriptedProvider) Chat(ctx context.Context, _ llm.Request) (*llm.Respon
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if s.calls >= len(s.responses) {
-		return nil, fmt.Errorf("scripted: no response scripted for call %d", s.calls+1)
-	}
-	resp := s.responses[s.calls]
-	s.calls++
-	return resp, nil
+	return s.next()
 }
 
 // Stream reuses the same scripted responses as Chat, turning each one into
@@ -53,11 +64,10 @@ func (s *scriptedProvider) Stream(ctx context.Context, _ llm.Request) (<-chan ll
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if s.calls >= len(s.responses) {
-		return nil, fmt.Errorf("scripted: no response scripted for call %d", s.calls+1)
+	resp, err := s.next()
+	if err != nil {
+		return nil, err
 	}
-	resp := s.responses[s.calls]
-	s.calls++
 	return llm.StreamEvents(ctx, func(send func(llm.Event) bool) {
 		for _, b := range resp.Message.Blocks {
 			switch v := b.(type) {
@@ -911,13 +921,18 @@ func TestRunStreamDrivesScriptedConversationWithToolCall(t *testing.T) {
 }
 
 // fakeRenderer lets a test script Render's return value directly, to
-// exercise RunStream's error path without a real event stream.
+// exercise RunStream's error path without a real event stream. It still
+// drains ch to completion first, like every real Renderer does: leaving it
+// unread would leak scriptedProvider's producer goroutine, permanently
+// blocked mid-send on the unbuffered channel StreamEvents hands out.
 type fakeRenderer struct {
 	resp *llm.Response
 	err  error
 }
 
-func (f *fakeRenderer) Render(context.Context, <-chan llm.Event) (*llm.Response, error) {
+func (f *fakeRenderer) Render(_ context.Context, ch <-chan llm.Event) (*llm.Response, error) {
+	for range ch { //nolint:revive // draining, not iterating for a value
+	}
 	return f.resp, f.err
 }
 
