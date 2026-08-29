@@ -19,6 +19,19 @@ type chatRequest struct {
 	MaxTokens   int           `json:"max_tokens,omitempty"`
 	Temperature float64       `json:"temperature,omitempty"`
 	Stop        []string      `json:"stop,omitempty"`
+
+	// Stream and StreamOptions are only set by Stream, never by Chat — the
+	// zero values (false, nil) both omitempty away, so toRequest's output
+	// is identical for both callers until Stream overrides them.
+	Stream        bool           `json:"stream,omitempty"`
+	StreamOptions *streamOptions `json:"stream_options,omitempty"`
+}
+
+// streamOptions.IncludeUsage asks a streaming response to add a trailing
+// chunk carrying Usage — without it, most compatible backends never report
+// token counts for a streamed call at all.
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 // chatMessage is one entry in chatRequest.Messages or chatResponse's

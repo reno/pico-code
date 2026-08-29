@@ -102,13 +102,6 @@ func TestChatHTTPErrorStatus(t *testing.T) {
 	}
 }
 
-func TestStreamNotImplemented(t *testing.T) {
-	p := &Provider{httpClient: http.DefaultClient, baseURL: "http://example.invalid", model: "gpt-4o-mini"}
-	if _, err := p.Stream(context.Background(), llm.Request{}); err == nil {
-		t.Fatal("Stream() error = nil, want an error until phase 12.2 implements it")
-	}
-}
-
 func TestNewDefaultsBaseURL(t *testing.T) {
 	p, err := New(&config.Config{Provider: config.ProviderOpenAI, Model: "gpt-4o-mini"})
 	if err != nil {

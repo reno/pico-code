@@ -12,7 +12,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -103,10 +102,4 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request) (*llm.Response, er
 	}
 
 	return fromResponse(&cresp)
-}
-
-// Stream is not yet implemented — TASKS.md phase 12.2 adds SSE handling for
-// this adapter, matching the Event contract and assembly §6.2 established.
-func (p *Provider) Stream(_ context.Context, _ llm.Request) (<-chan llm.Event, error) {
-	return nil, errors.New("openai: streaming is not implemented yet")
 }
