@@ -1,11 +1,17 @@
 package ui
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"math/rand"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/reno/pico-code/internal/llm"
 )
 
 func newTestModel() Model {
@@ -214,6 +220,159 @@ func TestModelEnterSubmitsInputOnlyWhenIdle(t *testing.T) {
 	}
 	if m.textarea.Value() != "" {
 		t.Errorf("textarea value after submit = %q, want it cleared", m.textarea.Value())
+	}
+}
+
+// TestModelStatusLineTracksElapsedAndTokens is 10.1's AC: a scripted
+// tick/event sequence renders the documented status line, and it resets
+// cleanly between turns instead of accumulating.
+func TestModelStatusLineTracksElapsedAndTokens(t *testing.T) {
+	m := newTestModel()
+	if got := m.View(); !strings.Contains(got, "> ") {
+		t.Fatalf("idle view = %q, want the plain prompt with no timer", got)
+	}
+
+	m = update(m, turnStartedMsg{cancel: func() {}})
+	m = update(m, turnTickMsg{})
+	m = update(m, turnTickMsg{})
+	m = update(m, textDeltaMsg{text: strings.Repeat("x", 4800)}) // ~1200 estimated tokens
+
+	want := fmt.Sprintf("%s… (2s · ↑ 1.2k tokens · esc to interrupt)", m.currentWord)
+	if got := m.statusText(); got != want {
+		t.Fatalf("statusText = %q, want %q", got, want)
+	}
+
+	m = update(m, turnDoneMsg{text: "done"})
+	if got := m.View(); !strings.Contains(got, "> ") || strings.Contains(got, "esc to interrupt") {
+		t.Fatalf("idle view after turn = %q, want the plain prompt with no timer", got)
+	}
+
+	// A second turn must not carry over the first turn's elapsed time or
+	// token count.
+	m = update(m, turnStartedMsg{cancel: func() {}})
+	if want := fmt.Sprintf("%s… (0s · ↑ 0 tokens · esc to interrupt)", m.currentWord); m.statusText() != want {
+		t.Fatalf("statusText at the start of a new turn = %q, want %q", m.statusText(), want)
+	}
+	m = update(m, turnTickMsg{})
+	if want := fmt.Sprintf("%s… (1s · ↑ 0 tokens · esc to interrupt)", m.currentWord); m.statusText() != want {
+		t.Fatalf("statusText = %q, want %q (no leakage from the previous turn)", m.statusText(), want)
+	}
+}
+
+// TestModelTurnTickStopsOnceIdle proves a tick arriving after the turn has
+// already ended (a race between the timer and turnDoneMsg) is a no-op
+// rather than resurrecting the timer or corrupting state.
+func TestModelTurnTickStopsOnceIdle(t *testing.T) {
+	m := newTestModel()
+	m = update(m, turnStartedMsg{cancel: func() {}})
+	m = update(m, turnDoneMsg{text: "done"})
+
+	next, cmd := m.Update(turnTickMsg{})
+	m = next.(Model)
+	if cmd != nil {
+		t.Error("turnTickMsg while idle should not reschedule another tick")
+	}
+	if m.turnElapsed != 0 {
+		t.Errorf("turnElapsed = %d, want 0 once idle", m.turnElapsed)
+	}
+}
+
+// TestModelEscInterruptsTurnWithoutQuitting proves the status line's "esc
+// to interrupt" hint is backed by real behavior: Esc during a turn cancels
+// it the same way Ctrl+C does, and does not quit the program.
+func TestModelEscInterruptsTurnWithoutQuitting(t *testing.T) {
+	m := newTestModel()
+	cancelled := false
+	m = update(m, turnStartedMsg{cancel: func() { cancelled = true }})
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	if !cancelled {
+		t.Error("Esc during a turn should cancel it")
+	}
+	if cmd != nil {
+		t.Error("Esc should not quit the program")
+	}
+	if m.state != stateStreaming {
+		t.Errorf("state after Esc = %v, want it to stay stateStreaming (cancellation arrives via turnDoneMsg)", m.state)
+	}
+}
+
+// TestTurnWordRotatesOnBoundariesAndNeverRepeats is 10.2's AC: with a fixed
+// rand.Source, the word changes exactly on rotation boundaries, stays
+// stable across every re-render in between, and never repeats itself on a
+// rotation (including the boundary between two turns).
+func TestTurnWordRotatesOnBoundariesAndNeverRepeats(t *testing.T) {
+	m := newTestModel()
+	m.wordRand = rand.New(rand.NewSource(1))
+
+	m = update(m, turnStartedMsg{cancel: func() {}})
+	seen := []string{m.currentWord}
+	if seen[0] == "" {
+		t.Fatal("currentWord after turnStartedMsg is empty, want a word from the vocabulary")
+	}
+
+	for rotation := 0; rotation < 5; rotation++ {
+		stable := m.currentWord
+		for tick := 1; tick < wordRotationTicks; tick++ {
+			m = update(m, turnTickMsg{})
+			if m.currentWord != stable {
+				t.Fatalf("rotation %d tick %d: word changed to %q before the rotation boundary (want it to stay %q)", rotation, tick, m.currentWord, stable)
+			}
+			// A re-render from an unrelated message must not perturb the word.
+			m = update(m, textDeltaMsg{text: "x"})
+			if m.currentWord != stable {
+				t.Fatalf("rotation %d: textDeltaMsg changed the word from %q to %q between rotations", rotation, stable, m.currentWord)
+			}
+		}
+		m = update(m, turnTickMsg{}) // the rotation boundary itself
+		if m.currentWord == stable {
+			t.Fatalf("rotation %d: word %q did not change at the rotation boundary", rotation, stable)
+		}
+		seen = append(seen, m.currentWord)
+	}
+
+	for i := 1; i < len(seen); i++ {
+		if seen[i] == seen[i-1] {
+			t.Fatalf("word %q repeated back to back at rotation %d: %v", seen[i], i, seen)
+		}
+	}
+
+	// Ending the turn and starting a new one must not repeat the last word
+	// either — "never the same word twice in a row" spans turn boundaries.
+	last := m.currentWord
+	m = update(m, turnDoneMsg{text: "done"})
+	m = update(m, turnStartedMsg{cancel: func() {}})
+	if m.currentWord == last {
+		t.Fatalf("first word of the new turn (%q) repeated the previous turn's last word", m.currentWord)
+	}
+}
+
+// TestPlainRendererEmitsNoStatusLine is the other half of 10.2's AC: the
+// non-TTY plain renderer never emits a status line, spinner, or turn word
+// at all — only the assistant's own text and one-line tool markers.
+func TestPlainRendererEmitsNoStatusLine(t *testing.T) {
+	var buf strings.Builder
+	p := PlainRenderer{Out: &buf}
+	ch := make(chan llm.Event)
+	go send(ch,
+		llm.ToolUseStart{ID: "t1", Name: "read_file"},
+		llm.TextDelta{Text: "hello"},
+		llm.ToolUseDone{ID: "t1", Input: json.RawMessage(`{}`)},
+		llm.MessageDone{StopReason: "end_turn"},
+	)
+
+	if _, err := p.Render(context.Background(), ch); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	got := buf.String()
+	if strings.Contains(got, "esc to interrupt") {
+		t.Errorf("plain output = %q, want no status-line artifacts", got)
+	}
+	for _, w := range turnWords {
+		if strings.Contains(got, w) {
+			t.Errorf("plain output = %q, contains turn word %q — the plain renderer must never render one", got, w)
+		}
 	}
 }
 

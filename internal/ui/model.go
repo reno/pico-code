@@ -3,7 +3,10 @@ package ui
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -60,6 +63,13 @@ type Model struct {
 	liveTools []toolBlock
 	cancel    context.CancelFunc
 
+	turnElapsed int // seconds ticked since the current turn started
+	turnTokens  int // estimated tokens streamed so far this turn
+
+	wordRand    *rand.Rand // overridden directly by tests for determinism
+	currentWord string     // this turn's word, rotated by turnTickMsg
+	wordTick    int        // ticks since the last rotation
+
 	approvalQueue []approvalRequest
 	approval      *approvalRequest
 
@@ -87,6 +97,7 @@ func NewModel(submit chan<- string, info BannerInfo) Model {
 		spinner:    sp,
 		viewport:   viewport.New(80, 20),
 		bannerInfo: info,
+		wordRand:   rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -115,10 +126,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.liveText = ""
 		m.liveTools = nil
 		m.err = nil
+		m.turnElapsed = 0
+		m.turnTokens = 0
+		m.wordTick = 0
+		m.currentWord = nextWord(m.wordRand, m.currentWord)
 		m.refreshViewport()
-		return m, m.spinner.Tick
+		return m, tea.Batch(m.spinner.Tick, tickEvery())
+	case turnTickMsg:
+		if m.state == stateIdle {
+			return m, nil
+		}
+		m.turnElapsed++
+		m.wordTick++
+		if m.wordTick%wordRotationTicks == 0 {
+			m.currentWord = nextWord(m.wordRand, m.currentWord)
+		}
+		return m, tickEvery()
 	case textDeltaMsg:
 		m.liveText += msg.text
+		m.turnTokens = estimateStreamedTokens(m.liveText)
 		m.refreshViewport()
 		return m, nil
 	case toolStartedMsg:
@@ -235,6 +261,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if msg.Type == tea.KeyEsc && m.state != stateIdle {
+		if m.cancel != nil {
+			m.cancel()
+		}
+		return m, nil
+	}
+
 	if m.state == stateIdle && msg.Type == tea.KeyEnter {
 		input := strings.TrimSpace(m.textarea.Value())
 		if input == "" {
@@ -327,15 +360,91 @@ func (m Model) View() string {
 	return m.viewport.View() + "\n" + status + "\n" + m.textarea.View()
 }
 
+// statusText renders the turn status line: a word describing what's
+// happening, elapsed time since the turn started, an estimate of tokens
+// streamed so far, and the key that interrupts it.
 func (m Model) statusText() string {
+	return fmt.Sprintf("%s… (%ds · ↑ %s tokens · esc to interrupt)", m.turnWord(), m.turnElapsed, formatTokenCount(m.turnTokens))
+}
+
+func (m Model) turnWord() string {
 	switch m.state {
-	case stateStreaming:
-		return "thinking…"
-	case stateToolRunning:
-		return "running tools…"
+	case stateStreaming, stateToolRunning:
+		return m.currentWord
 	default:
 		return ""
 	}
+}
+
+// wordRotationTicks is how many once-per-second turnTickMsgs pass between
+// word rotations — a few seconds, per 10.2, long enough to read.
+const wordRotationTicks = 3
+
+// turnWords is the vocabulary the status line's word is drawn from while a
+// turn is in flight — deliberately whimsical, since it stands in for real
+// progress we don't have a finer-grained signal for.
+var turnWords = []string{
+	"computing",
+	"compiling",
+	"parsing",
+	"indexing",
+	"vectorizing",
+	"reticulating",
+	"percolating",
+	"marinating",
+	"bikeshedding",
+	"yak-shaving",
+	"spelunking",
+	"noodling",
+	"cogitating",
+	"ruminating",
+	"pondering",
+	"frobnicating",
+}
+
+// nextWord draws a word from turnWords using r, excluding prev so the
+// status line never shows the same word twice in a row.
+func nextWord(r *rand.Rand, prev string) string {
+	if len(turnWords) == 1 {
+		return turnWords[0]
+	}
+	for {
+		w := turnWords[r.Intn(len(turnWords))]
+		if w != prev {
+			return w
+		}
+	}
+}
+
+// tickEvery schedules the next turnTickMsg one second out. Update
+// re-issues it after every tick for as long as a turn is in flight, and
+// lets it lapse once the turn returns to stateIdle.
+func tickEvery() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return turnTickMsg{} })
+}
+
+// estimateStreamedTokens approximates a token count from streamed text
+// length for the status line's live counter — the same ~4-chars-per-token
+// rule of thumb used as a fallback elsewhere, not a billing figure (that
+// comes from the provider's own Usage once MessageDone arrives).
+func estimateStreamedTokens(s string) int {
+	if s == "" {
+		return 0
+	}
+	if n := len(s) / 4; n > 0 {
+		return n
+	}
+	return 1
+}
+
+// formatTokenCount renders a token count the way the status line quotes
+// one in flight ("1.2k"), with one decimal place so the counter visibly
+// moves between whole-thousand boundaries instead of jumping.
+func formatTokenCount(n int) string {
+	if n < 1000 {
+		return strconv.Itoa(n)
+	}
+	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
 func (m Model) approvalModalView() string {

@@ -30,6 +30,10 @@ type (
 		text string
 		err  error
 	}
+	// turnTickMsg drives the status line's once-per-second elapsed-time
+	// display. It self-schedules (see tickEvery) only while a turn is in
+	// flight, so it stops on its own once the turn ends.
+	turnTickMsg        struct{}
 	commandOutputMsg   struct{ text string }
 	approvalRequestMsg struct {
 		toolName string
