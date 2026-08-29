@@ -61,6 +61,23 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 
 		toolCallSeq := 0
 		var respText strings.Builder
+		// held back and re-checked against narratedToolCall once the full
+		// response is in, instead of being sent immediately as TextDelta,
+		// for as long as the accumulated text still looks like it could be
+		// one (see maybeNarratedCall below). Flushed unchanged the moment
+		// that stops being true, so an ordinary reply pays no cost.
+		var pending []string
+		maybeNarratedCall := true
+		flushPending := func() bool {
+			for _, text := range pending {
+				if !send(llm.TextDelta{Text: text}) {
+					return false
+				}
+			}
+			pending = nil
+			return true
+		}
+
 		scanner := bufio.NewScanner(res.Body)
 		scanner.Buffer(nil, 1024*1024)
 
@@ -81,10 +98,33 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 				return
 			}
 
+			if len(chunk.Message.ToolCalls) > 0 && maybeNarratedCall {
+				// Real structured tool_calls showed up after all, so
+				// whatever text preceded them was never a narrated call —
+				// release it as ordinary text.
+				maybeNarratedCall = false
+				if !flushPending() {
+					return
+				}
+			}
+
 			if chunk.Message.Content != "" {
 				respText.WriteString(chunk.Message.Content)
-				if !send(llm.TextDelta{Text: chunk.Message.Content}) {
-					return
+				if trimmed := strings.TrimSpace(respText.String()); maybeNarratedCall && trimmed != "" && !strings.HasPrefix(trimmed, "{") {
+					// Once we've seen a first non-whitespace character that
+					// isn't '{', this can no longer become a bare JSON
+					// object — give up the candidacy for good.
+					maybeNarratedCall = false
+				}
+				if maybeNarratedCall {
+					pending = append(pending, chunk.Message.Content)
+				} else {
+					if !flushPending() {
+						return
+					}
+					if !send(llm.TextDelta{Text: chunk.Message.Content}) {
+						return
+					}
 				}
 			}
 
@@ -110,6 +150,18 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 
 			if chunk.Done {
 				recordutil.LogBytes(ctx, "ollama: stream response", line)
+				if maybeNarratedCall {
+					if name, input, ok := narratedToolCall(respText.String(), req.Tools); ok {
+						if !send(llm.ToolUseStart{ID: "ollama_call_0", Name: name}) {
+							return
+						}
+						if !send(llm.ToolUseDone{ID: "ollama_call_0", Input: input}) {
+							return
+						}
+					} else if !flushPending() {
+						return
+					}
+				}
 				send(llm.MessageDone{
 					StopReason: chunk.DoneReason,
 					Usage: estimateUsage(req, respText.String(), llm.Usage{

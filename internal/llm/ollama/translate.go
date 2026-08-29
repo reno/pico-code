@@ -171,7 +171,7 @@ func toParameters(raw json.RawMessage) (api.ToolFunctionParameters, error) {
 // Response. req is only used to estimate token counts when resp's own are
 // 0 (see estimateUsage) — translation of the message itself doesn't need it.
 func fromResponse(req llm.Request, resp *api.ChatResponse) (*llm.Response, error) {
-	blocks, err := fromMessage(resp.Message)
+	blocks, err := fromMessage(resp.Message, req.Tools)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +185,19 @@ func fromResponse(req llm.Request, resp *api.ChatResponse) (*llm.Response, error
 	}, nil
 }
 
-func fromMessage(m api.Message) ([]llm.Block, error) {
+// fromMessage translates m into canonical blocks. tools is the set offered
+// this turn: when m carries no structured ToolCalls at all, its Content is
+// checked against narratedToolCall — some models that report native tool
+// support still write the call as plain JSON text instead of using the
+// structured field (CLAUDE.md's "sometimes narrate a tool call in prose
+// instead of calling it") — and recovered into a real ToolUse if it matches.
+func fromMessage(m api.Message, tools []llm.ToolDefinition) ([]llm.Block, error) {
+	if len(m.ToolCalls) == 0 {
+		if name, input, ok := narratedToolCall(m.Content, tools); ok {
+			return []llm.Block{llm.ToolUse{ID: "ollama_call_0", Name: name, Input: input}}, nil
+		}
+	}
+
 	var blocks []llm.Block
 	if m.Content != "" {
 		blocks = append(blocks, llm.Text{Text: m.Content})
@@ -206,4 +218,33 @@ func fromMessage(m api.Message) ([]llm.Block, error) {
 		blocks = append(blocks, llm.ToolUse{ID: id, Name: tc.Function.Name, Input: input})
 	}
 	return blocks, nil
+}
+
+// narratedToolCall recognizes a tool call written as plain JSON text
+// instead of Ollama's structured tool_calls field. It requires content,
+// once trimmed, to be *exactly* one JSON object shaped
+// {"name":string,"arguments":object} whose name matches one of tools —
+// both narrow enough that a model's legitimate "please output JSON" answer
+// isn't misread as a call it never intended to make.
+func narratedToolCall(content string, tools []llm.ToolDefinition) (name string, input json.RawMessage, ok bool) {
+	trimmed := strings.TrimSpace(content)
+	if !strings.HasPrefix(trimmed, "{") {
+		return "", nil, false
+	}
+	var parsed struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
+		return "", nil, false
+	}
+	if parsed.Name == "" || len(parsed.Arguments) == 0 {
+		return "", nil, false
+	}
+	for _, td := range tools {
+		if td.Name == parsed.Name {
+			return parsed.Name, parsed.Arguments, true
+		}
+	}
+	return "", nil, false
 }
