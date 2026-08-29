@@ -100,6 +100,28 @@ func TestToParamsGolden(t *testing.T) {
 	}
 }
 
+// TestToParamsFoldsThinkingBlockIntoText is a regression test: a Thinking
+// block reaching this adapter from history built against a different
+// provider (this one never produces one itself, 16.1) must not error the
+// whole turn — it folds into plain text instead.
+func TestToParamsFoldsThinkingBlockIntoText(t *testing.T) {
+	req := llm.Request{
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: "what's 7*8?"}}},
+			{
+				Role: llm.RoleAssistant,
+				Blocks: []llm.Block{
+					llm.Thinking{Text: "7 times 8 is 56."},
+					llm.Text{Text: "56"},
+				},
+			},
+		},
+	}
+	if _, err := toParams(req, "claude-test-model"); err != nil {
+		t.Fatalf("toParams() error = %v, want the Thinking block folded into text instead of erroring", err)
+	}
+}
+
 func TestToParamsUnsupportedRole(t *testing.T) {
 	req := llm.Request{
 		Messages: []llm.Message{{Role: "system", Blocks: []llm.Block{llm.Text{Text: "hi"}}}},

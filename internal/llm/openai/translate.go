@@ -175,6 +175,17 @@ func toAssistantMessages(blocks []llm.Block) ([]chatMessage, error) {
 				text.WriteByte('\n')
 			}
 			text.WriteString(v.Text)
+		case llm.Thinking:
+			// This adapter doesn't request thinking (16.1's no-op stance),
+			// but a Thinking block can still reach it from history built
+			// against a different, --think-enabled provider (e.g. a saved
+			// session resumed with --provider=openai). Folding it into
+			// plain text keeps that context instead of erroring the whole
+			// turn or silently dropping it.
+			if text.Len() > 0 {
+				text.WriteByte('\n')
+			}
+			text.WriteString(v.Text)
 		case llm.ToolUse:
 			args := string(v.Input)
 			if args == "" {

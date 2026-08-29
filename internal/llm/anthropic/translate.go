@@ -103,6 +103,16 @@ func toContentBlocks(blocks []llm.Block) ([]sdk.ContentBlockParamUnion, error) {
 		switch v := b.(type) {
 		case llm.Text:
 			out[i] = sdk.NewTextBlock(v.Text)
+		case llm.Thinking:
+			// This adapter doesn't request thinking (16.1's no-op stance),
+			// but a Thinking block can still reach it from history built
+			// against a different, --think-enabled provider (e.g. a saved
+			// session resumed with --provider=anthropic). Folding it into
+			// plain text keeps that context instead of erroring the whole
+			// turn or silently dropping it — sending it as Anthropic's own
+			// native thinking block would need real extended-thinking
+			// support this adapter doesn't have yet.
+			out[i] = sdk.NewTextBlock(v.Text)
 		case llm.ToolUse:
 			out[i] = sdk.NewToolUseBlock(v.ID, v.Input, v.Name)
 		case llm.ToolResult:
