@@ -42,6 +42,38 @@ func TestCollectStreamReconstructsBlockBoundaries(t *testing.T) {
 	}
 }
 
+// TestCollectStreamReconstructsThinkingAheadOfText is half of 16.2's AC:
+// assembly produces the same Thinking block the non-streaming path would,
+// ordered ahead of the Text block that follows it.
+func TestCollectStreamReconstructsThinkingAheadOfText(t *testing.T) {
+	ch := StreamEvents(context.Background(), func(send func(Event) bool) {
+		send(ThinkingDelta{Text: "7 times "})
+		send(ThinkingDelta{Text: "8 is 56."})
+		send(TextDelta{Text: "56"})
+		send(MessageDone{StopReason: "end_turn", Usage: Usage{InputTokens: 10, OutputTokens: 5}})
+	})
+
+	got, err := CollectStream(context.Background(), ch)
+	if err != nil {
+		t.Fatalf("CollectStream() error = %v", err)
+	}
+
+	want := &Response{
+		Message: Message{
+			Role: RoleAssistant,
+			Blocks: []Block{
+				Thinking{Text: "7 times 8 is 56."},
+				Text{Text: "56"},
+			},
+		},
+		StopReason: "end_turn",
+		Usage:      Usage{InputTokens: 10, OutputTokens: 5},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("CollectStream() mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestCollectStreamPropagatesErrorEvent(t *testing.T) {
 	boom := errors.New("boom")
 	ch := StreamEvents(context.Background(), func(send func(Event) bool) {

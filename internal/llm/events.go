@@ -19,6 +19,15 @@ type TextDelta struct {
 
 func (TextDelta) isEvent() {}
 
+// ThinkingDelta is an incremental chunk of the model's reasoning trace,
+// emitted (if the provider produces one at all) before any TextDelta for
+// the same message (16.2).
+type ThinkingDelta struct {
+	Text string
+}
+
+func (ThinkingDelta) isEvent() {}
+
 // ToolUseStart announces a new tool call; its arguments follow as
 // ToolUseArgsDelta events and finish with a matching ToolUseDone.
 type ToolUseStart struct {

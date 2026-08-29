@@ -79,6 +79,64 @@ func TestStreamMatchesNonStreamingEquivalent(t *testing.T) {
 	}
 }
 
+// TestStreamThinkingMatchesNonStreamingEquivalent is 16.2's AC: a thinking
+// fixture where the NDJSON stream delivers "thinking" chunks ahead of any
+// "content" chunk assembles into the same byte-identical Thinking block the
+// non-streaming path produces from the equivalent single-shot response.
+func TestStreamThinkingMatchesNonStreamingEquivalent(t *testing.T) {
+	ndjson, err := os.ReadFile("testdata/golden/stream_response_thinking.ndjson")
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	streamSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(ndjson)
+	}))
+	defer streamSrv.Close()
+
+	nonStreamBody, err := os.ReadFile("testdata/golden/stream_response_thinking_equivalent.json")
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	nonStreamSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(nonStreamBody)
+	}))
+	defer nonStreamSrv.Close()
+
+	req := llm.Request{
+		Think:    true,
+		Messages: []llm.Message{{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: "what's 7*8?"}}}},
+	}
+
+	streamP := &Provider{httpClient: http.DefaultClient, baseURL: streamSrv.URL, model: "qwen3:8b", numCtx: 4096}
+	ch, err := streamP.Stream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	streamed, err := llm.CollectStream(context.Background(), ch)
+	if err != nil {
+		t.Fatalf("CollectStream() error = %v", err)
+	}
+
+	nonStreamP := &Provider{httpClient: http.DefaultClient, baseURL: nonStreamSrv.URL, model: "qwen3:8b", numCtx: 4096}
+	nonStreamed, err := nonStreamP.Chat(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	if diff := cmp.Diff(nonStreamed, streamed); diff != "" {
+		t.Errorf("streamed Response differs from non-streaming equivalent (-nonStreaming +streamed):\n%s", diff)
+	}
+
+	want := []llm.Block{llm.Thinking{Text: "7 times 8 is 56."}, llm.Text{Text: "56"}}
+	if diff := cmp.Diff(want, streamed.Message.Blocks); diff != "" {
+		t.Errorf("streamed blocks mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // narratedStreamServer serves an NDJSON stream whose Content chunks join
 // into text, with no structured tool_calls anywhere in the response —
 // reproducing what qwen2.5-coder:7b actually sends over the wire for a

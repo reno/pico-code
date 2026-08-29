@@ -54,6 +54,34 @@ func TestPlainRendererWritesTextAsItStreamsWithNoANSI(t *testing.T) {
 	}
 }
 
+// TestPlainRendererStaysSilentOnThinkingDelta is 16.3's AC: a scripted
+// ThinkingDelta produces zero output — no thinking text ever reaches piped
+// stdout — while still folding into the reconstructed Message ahead of
+// Text, the same shape the non-streaming path would produce.
+func TestPlainRendererStaysSilentOnThinkingDelta(t *testing.T) {
+	ch := make(chan llm.Event)
+	go send(ch,
+		llm.ThinkingDelta{Text: "7 times 8 is 56."},
+		llm.TextDelta{Text: "56"},
+		llm.MessageDone{StopReason: "end_turn"},
+	)
+
+	var buf bytes.Buffer
+	resp, err := (PlainRenderer{Out: &buf}).Render(context.Background(), ch)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+
+	if got := buf.String(); got != "56\n" {
+		t.Errorf("Out = %q, want %q (no thinking text at all)", got, "56\n")
+	}
+
+	want := []llm.Block{llm.Thinking{Text: "7 times 8 is 56."}, llm.Text{Text: "56"}}
+	if diff := cmp.Diff(want, resp.Message.Blocks); diff != "" {
+		t.Errorf("Blocks mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestPlainRendererReconstructsToolUseBlock(t *testing.T) {
 	ch := make(chan llm.Event)
 	go send(ch,

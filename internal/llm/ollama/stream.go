@@ -108,6 +108,12 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 				}
 			}
 
+			if chunk.Message.Thinking != "" {
+				if !send(llm.ThinkingDelta{Text: chunk.Message.Thinking}) {
+					return
+				}
+			}
+
 			if chunk.Message.Content != "" {
 				respText.WriteString(chunk.Message.Content)
 				if trimmed := strings.TrimSpace(respText.String()); maybeNarratedCall && trimmed != "" && !strings.HasPrefix(trimmed, "{") {

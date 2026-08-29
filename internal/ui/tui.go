@@ -16,9 +16,10 @@ import (
 // through the *tea.Program the caller owns — cmd/pico never touches these
 // directly, only wires Model, TUIRenderer, and TUIApprover together.
 type (
-	turnStartedMsg struct{ cancel context.CancelFunc }
-	textDeltaMsg   struct{ text string }
-	toolStartedMsg struct {
+	turnStartedMsg   struct{ cancel context.CancelFunc }
+	textDeltaMsg     struct{ text string }
+	thinkingDeltaMsg struct{ text string }
+	toolStartedMsg   struct {
 		id, name string
 		input    json.RawMessage
 	}
@@ -60,13 +61,25 @@ type TUIRenderer struct {
 	Program *tea.Program
 }
 
-// Render implements Renderer.
+// Render implements Renderer. ThinkingDelta text is folded into the
+// reconstructed Message the same way TextDelta is, ahead of the Text
+// block, and forwarded as its own message so Model can render it as a
+// separate, collapsible block (16.3) rather than mixed into the reply.
 func (r *TUIRenderer) Render(ctx context.Context, events <-chan llm.Event) (*llm.Response, error) {
 	var blocks []llm.Block
+	var thinking strings.Builder
 	var text strings.Builder
+	thinkingOpen := false
 	textOpen := false
 	names := map[string]string{}
 
+	flushThinking := func() {
+		if thinkingOpen {
+			blocks = append(blocks, llm.Thinking{Text: thinking.String()})
+			thinking.Reset()
+			thinkingOpen = false
+		}
+	}
 	flushText := func() {
 		if textOpen {
 			blocks = append(blocks, llm.Text{Text: text.String()})
@@ -84,17 +97,24 @@ func (r *TUIRenderer) Render(ctx context.Context, events <-chan llm.Event) (*llm
 				return nil, fmt.Errorf("ui: event stream closed before a MessageDone event")
 			}
 			switch v := e.(type) {
+			case llm.ThinkingDelta:
+				thinkingOpen = true
+				thinking.WriteString(v.Text)
+				r.Program.Send(thinkingDeltaMsg{text: v.Text})
 			case llm.TextDelta:
+				flushThinking()
 				textOpen = true
 				text.WriteString(v.Text)
 				r.Program.Send(textDeltaMsg{text: v.Text})
 			case llm.ToolUseStart:
+				flushThinking()
 				flushText()
 				names[v.ID] = v.Name
 			case llm.ToolUseArgsDelta:
 			case llm.ToolUseDone:
 				blocks = append(blocks, llm.ToolUse{ID: v.ID, Name: names[v.ID], Input: v.Input})
 			case llm.MessageDone:
+				flushThinking()
 				flushText()
 				return &llm.Response{
 					Message:    llm.Message{Role: llm.RoleAssistant, Blocks: blocks},
