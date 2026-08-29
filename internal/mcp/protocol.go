@@ -91,3 +91,29 @@ type ToolInfo struct {
 type listToolsResult struct {
 	Tools []ToolInfo `json:"tools"`
 }
+
+// callToolParams is tools/call's request payload.
+type callToolParams struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+}
+
+// CallToolResult is tools/call's response payload. IsError distinguishes a
+// tool-execution failure the server still reports through a normal
+// JSON-RPC result (per the MCP spec, execution errors use this flag, not
+// a JSON-RPC error object — that's reserved for protocol-level failures
+// like an unknown tool name) from success.
+type CallToolResult struct {
+	Content []ContentBlock `json:"content"`
+	IsError bool           `json:"isError"`
+}
+
+// ContentBlock is one entry in a CallToolResult's Content array. Only Text
+// is populated for Type == "text"; other MCP content types (image,
+// resource, ...) carry no payload here, so a caller that flattens Content
+// to a string can still name what it dropped instead of silently losing
+// it.
+type ContentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}

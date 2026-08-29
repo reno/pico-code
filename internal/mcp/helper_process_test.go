@@ -25,7 +25,11 @@ func TestHelperProcess(_ *testing.T) {
 
 	switch os.Getenv("MCP_HELPER_MODE") {
 	case "ok":
-		runOKHelperServer()
+		runOKHelperServer(callBehaviorEcho)
+	case "call_errors":
+		runOKHelperServer(callBehaviorError)
+	case "crash_on_call":
+		runOKHelperServer(callBehaviorCrash)
 	case "hang":
 		time.Sleep(10 * time.Second)
 	case "bad_json":
@@ -35,10 +39,26 @@ func TestHelperProcess(_ *testing.T) {
 	}
 }
 
+type callBehavior int
+
+const (
+	// callBehaviorEcho answers tools/call by echoing the "text" argument
+	// back as a single text content block.
+	callBehaviorEcho callBehavior = iota
+	// callBehaviorError answers tools/call with a normal JSON-RPC result
+	// whose isError is true, per the MCP spec's own convention for a tool
+	// execution failure.
+	callBehaviorError
+	// callBehaviorCrash exits without responding to tools/call at all,
+	// simulating a server killed mid-call: the client's pending read
+	// hits EOF instead of a response.
+	callBehaviorCrash
+)
+
 // runOKHelperServer answers initialize and tools/list correctly, and
 // silently drops notifications/initialized (a notification, never
-// answered).
-func runOKHelperServer() {
+// answered). tools/call's answer depends on behavior.
+func runOKHelperServer(behavior callBehavior) {
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		line, err := reader.ReadBytes('\n')
@@ -48,6 +68,12 @@ func runOKHelperServer() {
 		var req struct {
 			ID     int64  `json:"id"`
 			Method string `json:"method"`
+			Params struct {
+				Name      string `json:"name"`
+				Arguments struct {
+					Text string `json:"text"`
+				} `json:"arguments"`
+			} `json:"params"`
 		}
 		if err := json.Unmarshal(line, &req); err != nil {
 			return
@@ -59,6 +85,15 @@ func runOKHelperServer() {
 			fmt.Printf(`{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"echo","description":"echoes input","inputSchema":{"type":"object","properties":{"text":{"type":"string"}}}}]}}`+"\n", req.ID)
 		case "notifications/initialized":
 			// No response — it's a notification.
+		case "tools/call":
+			switch behavior {
+			case callBehaviorEcho:
+				fmt.Printf(`{"jsonrpc":"2.0","id":%d,"result":{"content":[{"type":"text","text":%q}],"isError":false}}`+"\n", req.ID, req.Params.Arguments.Text)
+			case callBehaviorError:
+				fmt.Printf(`{"jsonrpc":"2.0","id":%d,"result":{"content":[{"type":"text","text":"boom"}],"isError":true}}`+"\n", req.ID)
+			case callBehaviorCrash:
+				os.Exit(1)
+			}
 		}
 	}
 }

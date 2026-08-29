@@ -106,6 +106,20 @@ func (c *Client) ListTools(ctx context.Context) ([]ToolInfo, error) {
 	return result.Tools, nil
 }
 
+// Call invokes tool on the server via tools/call with arguments and
+// returns the server's raw result. Call has no opinion on what the
+// result means for a caller building a string tool answer — flattening
+// Content and applying a truncation budget is internal/tools' policy, not
+// this transport's.
+func (c *Client) Call(ctx context.Context, tool string, arguments json.RawMessage) (*CallToolResult, error) {
+	var result CallToolResult
+	params := callToolParams{Name: tool, Arguments: arguments}
+	if err := c.call(ctx, "tools/call", params, &result); err != nil {
+		return nil, fmt.Errorf("mcp: %q: tools/call %s: %w", c.name, tool, err)
+	}
+	return &result, nil
+}
+
 // Close terminates the server process and waits for it to exit.
 func (c *Client) Close() error {
 	_ = c.stdin.Close()
