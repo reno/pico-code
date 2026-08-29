@@ -94,6 +94,59 @@ func TestModelStateTransitionsIdleStreamingToolIdle(t *testing.T) {
 	}
 }
 
+// TestModelThinkingBlockDefaultsCollapsedAndCtrlTTogglesIt is 16.3's AC:
+// the thinking block's expand/collapse state transition, defaulting
+// collapsed (no reasoning text visible) and toggled by ctrl+t.
+func TestModelThinkingBlockDefaultsCollapsedAndCtrlTTogglesIt(t *testing.T) {
+	m := newTestModel()
+	m = update(m, turnStartedMsg{cancel: func() {}})
+	m = update(m, thinkingDeltaMsg{text: "7 times 8 is 56."})
+
+	if m.thinkingExpanded {
+		t.Fatal("thinkingExpanded = true initially, want collapsed by default")
+	}
+	if got := m.liveThinking; got != "7 times 8 is 56." {
+		t.Fatalf("liveThinking = %q, want the accumulated text regardless of expand state", got)
+	}
+	rendered := m.viewport.View()
+	if strings.Contains(rendered, "7 times 8 is 56.") {
+		t.Error("collapsed thinking block leaked its text into the rendered view")
+	}
+	if !strings.Contains(rendered, "thinking") {
+		t.Error("collapsed thinking block should still show a hint that thinking happened")
+	}
+
+	m = update(m, tea.KeyMsg{Type: tea.KeyCtrlT})
+	if !m.thinkingExpanded {
+		t.Fatal("thinkingExpanded = false after ctrl+t, want true")
+	}
+	if !strings.Contains(m.viewport.View(), "7 times 8 is 56.") {
+		t.Error("expanded thinking block should show its accumulated text")
+	}
+
+	m = update(m, tea.KeyMsg{Type: tea.KeyCtrlT})
+	if m.thinkingExpanded {
+		t.Fatal("thinkingExpanded = true after a second ctrl+t, want it toggled back to false")
+	}
+}
+
+// TestModelThinkingClearedOnceTurnFinalizes is 16.3's AC: the thinking
+// block follows 7.2's tool-block pattern — visible only while the turn is
+// live, never inlined into the persisted transcript once it finalizes.
+func TestModelThinkingClearedOnceTurnFinalizes(t *testing.T) {
+	m := newTestModel()
+	m = update(m, turnStartedMsg{cancel: func() {}})
+	m = update(m, thinkingDeltaMsg{text: "some reasoning"})
+	m = update(m, turnDoneMsg{text: "the answer"})
+
+	if m.liveThinking != "" {
+		t.Errorf("liveThinking = %q after the turn finalized, want it cleared", m.liveThinking)
+	}
+	if strings.Contains(m.completed, "some reasoning") {
+		t.Error("thinking text leaked into the persisted transcript")
+	}
+}
+
 // TestModelAccumulatesMultipleTextDeltasAcrossSeparateUpdateCalls is a
 // regression test for a real streaming crash: liveText used to be a
 // strings.Builder value field, and Update has a value receiver, so each

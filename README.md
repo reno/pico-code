@@ -122,6 +122,7 @@ you'll need to add `--tools=native` explicitly.
 | `--session`       | (none)       | name a session to resume or start; saved after every turn       |
 | `--allow-commands`| (none)       | comma-separated binary allowlist; registers `run_command` only if non-empty |
 | `--context-window`| `200000`     | context window compaction measures usage against; ignored by Ollama, which uses `--num-ctx` |
+| `--think`         | `false`      | ask the model for a reasoning trace ahead of its reply; currently Ollama only |
 
 `PICO_CODE_PROVIDER` is an environment fallback for `--provider`, checked
 only when the flag isn't explicitly set. `ANTHROPIC_API_KEY` and
@@ -164,6 +165,13 @@ Ctrl+C there cancels only the in-flight turn and returns to the prompt,
 and Ctrl+D is the one that exits — a per-turn cancellation the plain REPL
 doesn't have, since its context is shared process-wide rather than derived
 fresh per turn.
+
+With `--think` on (16.1), a model's reasoning trace shows as a dim,
+collapsed-by-default block above its reply — `ctrl+t` expands or collapses
+it. Like tool-call blocks, it's visible only while a turn is in flight and
+isn't kept once the reply finalizes; the plain REPL never shows it at all,
+even with `--think` on, since piped/redirected output stays ANSI-free by
+design.
 
 ## Safety
 

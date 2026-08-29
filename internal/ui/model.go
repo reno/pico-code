@@ -106,6 +106,9 @@ type Model struct {
 	liveTools []toolBlock
 	cancel    context.CancelFunc
 
+	liveThinking     string // in-progress reasoning trace, appended per thinkingDeltaMsg
+	thinkingExpanded bool   // toggled by ctrl+t; persists across turns like a viewing preference
+
 	turnElapsed int // seconds ticked since the current turn started
 	turnTokens  int // estimated tokens streamed so far this turn
 
@@ -195,6 +198,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cancel = msg.cancel
 		m.liveText = ""
 		m.liveTools = nil
+		m.liveThinking = ""
 		m.err = nil
 		m.turnElapsed = 0
 		m.turnTokens = 0
@@ -212,6 +216,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.currentWord = nextWord(m.wordRand, m.currentWord)
 		}
 		return m, tickEvery()
+	case thinkingDeltaMsg:
+		m.liveThinking += msg.text
+		m.refreshViewport()
+		return m, nil
 	case textDeltaMsg:
 		m.liveText += msg.text
 		m.turnTokens = estimateStreamedTokens(m.liveText)
@@ -325,6 +333,7 @@ func (m *Model) finalizeTurn(text string, err error) {
 	}
 	m.liveText = ""
 	m.liveTools = nil
+	m.liveThinking = ""
 	m.refreshViewport()
 	m.textarea.Focus()
 }
@@ -353,6 +362,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	if m.state == stateApproval {
 		return m.handleApprovalKey(msg)
+	}
+
+	if msg.Type == tea.KeyCtrlT {
+		m.thinkingExpanded = !m.thinkingExpanded
+		m.refreshViewport()
+		return m, nil
 	}
 
 	if msg.Type == tea.KeyCtrlC {
@@ -457,12 +472,38 @@ func writeToolBlock(b *strings.Builder, tb toolBlock, depth int) {
 	}
 }
 
+// thinkingStyle dims the reasoning-trace preview block (16.3), the same
+// faint tone used elsewhere for de-emphasized status text.
+var thinkingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
+// writeThinkingBlock renders the live Thinking block above the assistant's
+// reply — collapsed to a one-line hint by default, or the full dim text
+// when expanded (ctrl+t) — following 7.2's tool-block pattern: visible only
+// while the turn is live, discarded once it finalizes (finalizeTurn clears
+// liveThinking the same way it clears liveTools), never inlined into the
+// persisted transcript.
+func writeThinkingBlock(b *strings.Builder, thinking string, expanded bool) {
+	if !expanded {
+		fmt.Fprintln(b, thinkingStyle.Render("▸ thinking (ctrl+t to expand)"))
+		b.WriteString("\n")
+		return
+	}
+	fmt.Fprintln(b, thinkingStyle.Render("▾ thinking (ctrl+t to collapse)"))
+	for _, line := range strings.Split(thinking, "\n") {
+		fmt.Fprintln(b, thinkingStyle.Render("  "+line))
+	}
+	b.WriteString("\n")
+}
+
 // refreshViewport rebuilds the viewport's content from the finalized
 // transcript plus whatever the in-progress turn has produced so far.
 func (m *Model) refreshViewport() {
 	var b strings.Builder
 	b.WriteString(m.banner)
 	b.WriteString(m.completed)
+	if m.liveThinking != "" {
+		writeThinkingBlock(&b, m.liveThinking, m.thinkingExpanded)
+	}
 	if len(m.liveText) > 0 || len(m.liveTools) > 0 {
 		b.WriteString(m.liveText)
 		b.WriteString("\n")
