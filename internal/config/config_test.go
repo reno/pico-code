@@ -77,10 +77,40 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
-			name: "unknown provider",
+			name: "valid openai picks up key and base url",
 			flags: func() Flags {
 				f := baseFlags()
 				f.Provider = "openai"
+				return f
+			}(),
+			getenv: func(k string) string {
+				switch k {
+				case "OPENAI_API_KEY":
+					return "sk-test"
+				case "OPENAI_BASE_URL":
+					return "https://example.test/v1"
+				default:
+					return ""
+				}
+			},
+			want: &Config{
+				Provider:      ProviderOpenAI,
+				Model:         "claude-x",
+				MaxTurns:      25,
+				TokenBudget:   100000,
+				Workspace:     ".",
+				Tools:         ToolsNative,
+				Stream:        true,
+				LogLevel:      "info",
+				OpenAIAPIKey:  "sk-test",
+				OpenAIBaseURL: "https://example.test/v1",
+			},
+		},
+		{
+			name: "unknown provider",
+			flags: func() Flags {
+				f := baseFlags()
+				f.Provider = "bedrock"
 				return f
 			}(),
 			getenv:  noEnv,

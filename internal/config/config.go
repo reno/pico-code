@@ -14,6 +14,7 @@ type Provider string
 const (
 	ProviderAnthropic Provider = "anthropic"
 	ProviderOllama    Provider = "ollama"
+	ProviderOpenAI    Provider = "openai"
 )
 
 // ToolsMode selects how tool calls are surfaced to the model.
@@ -112,6 +113,14 @@ type Config struct {
 	// is worse than typing it once into the environment.
 	AnthropicAPIKey string
 	OllamaHost      string
+
+	// OpenAIAPIKey and OpenAIBaseURL configure the OpenAI-compatible
+	// adapter. OpenAIAPIKey is optional (unlike AnthropicAPIKey): many
+	// compatible endpoints (vLLM, LM Studio, Ollama's own /v1) run with no
+	// auth at all. OpenAIBaseURL lets the same adapter target any of them,
+	// not just api.openai.com.
+	OpenAIAPIKey  string
+	OpenAIBaseURL string
 }
 
 // Load validates f and merges in provider credentials read via getenv.
@@ -119,9 +128,9 @@ type Config struct {
 func Load(f Flags, getenv func(string) string) (*Config, error) {
 	provider := Provider(f.Provider)
 	switch provider {
-	case ProviderAnthropic, ProviderOllama:
+	case ProviderAnthropic, ProviderOllama, ProviderOpenAI:
 	default:
-		return nil, fmt.Errorf("%w: %q (want %q or %q)", ErrUnknownProvider, f.Provider, ProviderAnthropic, ProviderOllama)
+		return nil, fmt.Errorf("%w: %q (want %q, %q, or %q)", ErrUnknownProvider, f.Provider, ProviderAnthropic, ProviderOllama, ProviderOpenAI)
 	}
 
 	tools := ToolsMode(f.Tools)
@@ -156,5 +165,7 @@ func Load(f Flags, getenv func(string) string) (*Config, error) {
 		ContextWindow:   f.ContextWindow,
 		AnthropicAPIKey: getenv("ANTHROPIC_API_KEY"),
 		OllamaHost:      getenv("OLLAMA_HOST"),
+		OpenAIAPIKey:    getenv("OPENAI_API_KEY"),
+		OpenAIBaseURL:   getenv("OPENAI_BASE_URL"),
 	}, nil
 }

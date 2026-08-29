@@ -9,6 +9,7 @@ import (
 
 	_ "github.com/reno/pico-code/internal/llm/anthropic"
 	_ "github.com/reno/pico-code/internal/llm/ollama"
+	_ "github.com/reno/pico-code/internal/llm/openai"
 )
 
 func main() {

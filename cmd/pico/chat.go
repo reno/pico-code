@@ -109,7 +109,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 	}
 
 	f := cmd.Flags()
-	f.StringVar(&flags.provider, "provider", "anthropic", "LLM backend to use (anthropic|ollama)")
+	f.StringVar(&flags.provider, "provider", "anthropic", "LLM backend to use (anthropic|ollama|openai)")
 	f.StringVar(&flags.model, "model", "", "model identifier for the selected provider")
 	f.IntVar(&flags.maxTurns, "max-turns", 25, "maximum agent loop turns before stopping")
 	f.IntVar(&flags.tokenBudget, "token-budget", 100_000, "maximum cumulative tokens before stopping")
