@@ -30,6 +30,9 @@ func toRequest(req llm.Request, model string, numCtx int) (*api.ChatRequest, err
 	if req.Temperature != 0 {
 		ar.Options["temperature"] = req.Temperature
 	}
+	if req.Think {
+		ar.Think = &api.ThinkValue{Value: true}
+	}
 
 	var msgs []api.Message
 	if req.System != "" {
@@ -199,6 +202,9 @@ func fromMessage(m api.Message, tools []llm.ToolDefinition) ([]llm.Block, error)
 	}
 
 	var blocks []llm.Block
+	if m.Thinking != "" {
+		blocks = append(blocks, llm.Thinking{Text: m.Thinking})
+	}
 	if m.Content != "" {
 		blocks = append(blocks, llm.Text{Text: m.Content})
 	}

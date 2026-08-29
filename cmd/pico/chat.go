@@ -66,6 +66,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 		allowCommands []string
 		contextWindow int
 		mcpConfig     string
+		think         bool
 	}
 
 	cmd := &cobra.Command{
@@ -101,6 +102,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 				AllowCommands: flags.allowCommands,
 				ContextWindow: flags.contextWindow,
 				MCPConfig:     flags.mcpConfig,
+				Think:         flags.think,
 			}, getenv)
 			if err != nil {
 				return fmt.Errorf("resolving config: %w", err)
@@ -127,6 +129,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 	f.StringSliceVar(&flags.allowCommands, "allow-commands", nil, "comma-separated binary allowlist for run_command; registers the tool only if non-empty")
 	f.IntVar(&flags.contextWindow, "context-window", defaultContextWindow, "context window size compaction measures usage against (ignored by Ollama, which uses --num-ctx instead)")
 	f.StringVar(&flags.mcpConfig, "mcp-config", "", `path to a JSON file listing MCP servers, shaped {"mcpServers": {name: {command, args, env}}}`)
+	f.BoolVar(&flags.think, "think", false, "ask the model for a reasoning trace ahead of its reply, when the provider supports one (currently Ollama only)")
 
 	return cmd
 }
@@ -328,6 +331,7 @@ func runPlainChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider,
 		return err
 	}
 	ag.SetCompactionPolicy(compactionPolicy(cfg))
+	ag.SetThink(cfg.Think)
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
 	in := cmd.InOrStdin()
@@ -536,6 +540,7 @@ func runTUIChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, r
 		return err
 	}
 	ag.SetCompactionPolicy(compactionPolicy(cfg))
+	ag.SetThink(cfg.Think)
 
 	go func() {
 		for input := range submit {

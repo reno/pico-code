@@ -93,6 +93,9 @@ func toRequest(req llm.Request, model string) (*chatRequest, error) {
 	if len(req.StopSequences) > 0 {
 		cr.Stop = req.StopSequences
 	}
+	// req.Think (16.1) is intentionally ignored here: chatRequest has no
+	// equivalent field, and Request.Think is defined to be a no-op for a
+	// provider that doesn't support it, not an error.
 
 	var msgs []chatMessage
 	if req.System != "" {

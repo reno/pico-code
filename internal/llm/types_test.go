@@ -63,6 +63,19 @@ func TestMessageRoundTrip(t *testing.T) {
 				{Role: RoleAssistant, Blocks: []Block{Text{Text: "Debug mode is enabled."}}},
 			},
 		},
+		{
+			name: "thinking ahead of text",
+			conversation: []Message{
+				{Role: RoleUser, Blocks: []Block{Text{Text: "what's 7*8?"}}},
+				{
+					Role: RoleAssistant,
+					Blocks: []Block{
+						Thinking{Text: "7*8 is 56."},
+						Text{Text: "56."},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -86,7 +99,7 @@ func TestMessageRoundTrip(t *testing.T) {
 
 func TestMessageUnmarshalUnknownBlockType(t *testing.T) {
 	var m Message
-	err := json.Unmarshal([]byte(`{"role":"user","blocks":[{"type":"thinking"}]}`), &m)
+	err := json.Unmarshal([]byte(`{"role":"user","blocks":[{"type":"bogus"}]}`), &m)
 	if err == nil {
 		t.Fatal("expected an error for an unknown block type")
 	}

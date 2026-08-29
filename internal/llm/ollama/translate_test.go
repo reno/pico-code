@@ -82,6 +82,29 @@ func TestToRequestGolden(t *testing.T) {
 	}
 }
 
+// TestToRequestThinkSetsThinkValue and TestToRequestThinkUnsetLeavesThinkNil
+// are 16.1's AC: an unset Request.Think (the default) leaves the wire
+// request unchanged from before 16.1, and a set one turns Think on.
+func TestToRequestThinkSetsThinkValue(t *testing.T) {
+	ar, err := toRequest(llm.Request{Think: true}, "qwen3:8b", 4096)
+	if err != nil {
+		t.Fatalf("toRequest() error = %v", err)
+	}
+	if ar.Think == nil || ar.Think.Value != true {
+		t.Errorf("Think = %+v, want a ThinkValue{Value: true}", ar.Think)
+	}
+}
+
+func TestToRequestThinkUnsetLeavesThinkNil(t *testing.T) {
+	ar, err := toRequest(llm.Request{}, "qwen3:8b", 4096)
+	if err != nil {
+		t.Fatalf("toRequest() error = %v", err)
+	}
+	if ar.Think != nil {
+		t.Errorf("Think = %+v, want nil when Request.Think is unset", ar.Think)
+	}
+}
+
 func TestToRequestUnsupportedRole(t *testing.T) {
 	req := llm.Request{
 		Messages: []llm.Message{{Role: "system", Blocks: []llm.Block{llm.Text{Text: "hi"}}}},

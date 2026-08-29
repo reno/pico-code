@@ -69,6 +69,7 @@ type Flags struct {
 	AllowCommands []string
 	ContextWindow int
 	MCPConfig     string
+	Think         bool
 }
 
 // Config is the fully resolved, validated configuration for a chat session.
@@ -114,6 +115,11 @@ type Config struct {
 	// env}}} shape most existing MCP clients already use; empty means no
 	// MCP servers are configured.
 	MCPConfig string
+
+	// Think asks a supporting provider (currently only Ollama, 16.1) to
+	// produce a Thinking block ahead of its reply. A provider with no
+	// equivalent ignores it silently.
+	Think bool
 
 	// AnthropicAPIKey and OllamaHost come from the environment only; there
 	// is no flag for either, since committing a secret to a shell history
@@ -171,6 +177,7 @@ func Load(f Flags, getenv func(string) string) (*Config, error) {
 		AllowCommands:   f.AllowCommands,
 		ContextWindow:   f.ContextWindow,
 		MCPConfig:       f.MCPConfig,
+		Think:           f.Think,
 		AnthropicAPIKey: getenv("ANTHROPIC_API_KEY"),
 		OllamaHost:      getenv("OLLAMA_HOST"),
 		OpenAIAPIKey:    getenv("OPENAI_API_KEY"),

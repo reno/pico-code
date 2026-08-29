@@ -23,8 +23,8 @@ const (
 
 // Block is one piece of content within a Message. It is sealed to this
 // package (via the unexported isBlock method) so every adapter can exhaust a
-// type switch over exactly Text, ToolUse, and ToolResult and know no other
-// case will ever appear.
+// type switch over exactly Text, ToolUse, ToolResult, and Thinking and know
+// no other case will ever appear.
 type Block interface {
 	isBlock()
 }
@@ -35,6 +35,16 @@ type Text struct {
 }
 
 func (Text) isBlock() {}
+
+// Thinking is a model's reasoning trace, produced ahead of its Text reply
+// when Request.Think asked for one (16.1). Not every provider supports it —
+// an adapter that doesn't never produces this block, rather than producing
+// an empty one.
+type Thinking struct {
+	Text string
+}
+
+func (Thinking) isBlock() {}
 
 // ToolUse is a model-issued request to call a tool. Input is kept as raw
 // JSON because the loop validates and decodes it against the tool's schema
@@ -97,6 +107,12 @@ type Request struct {
 	MaxTokens     int
 	Temperature   float64
 	StopSequences []string
+
+	// Think asks the provider to produce a Thinking block ahead of its
+	// reply, when it supports one (16.1). A provider with no equivalent
+	// ignores it — never an error, per CLAUDE.md invariant 2's "neutral
+	// Request field" pattern rather than widening Provider itself.
+	Think bool
 }
 
 // Response is a Provider's answer to a Request.
@@ -128,6 +144,8 @@ func toWireBlock(b Block) (wireBlock, error) {
 	switch v := b.(type) {
 	case Text:
 		return wireBlock{Type: "text", Text: v.Text}, nil
+	case Thinking:
+		return wireBlock{Type: "thinking", Text: v.Text}, nil
 	case ToolUse:
 		return wireBlock{Type: "tool_use", ID: v.ID, Name: v.Name, Input: v.Input}, nil
 	case ToolResult:
@@ -141,6 +159,8 @@ func (wb wireBlock) toBlock() (Block, error) {
 	switch wb.Type {
 	case "text":
 		return Text{Text: wb.Text}, nil
+	case "thinking":
+		return Thinking{Text: wb.Text}, nil
 	case "tool_use":
 		return ToolUse{ID: wb.ID, Name: wb.Name, Input: wb.Input}, nil
 	case "tool_result":

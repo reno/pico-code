@@ -135,6 +135,27 @@ func TestFromMessageDoesNotRecoverWhenRealToolCallsPresent(t *testing.T) {
 	}
 }
 
+// TestFromResponseParsesThinking is 16.1's AC: a response fixture with
+// thinking populated round-trips into []Block{Thinking{...}, Text{...}},
+// the reasoning trace ahead of the reply.
+func TestFromResponseParsesThinking(t *testing.T) {
+	got := decodeFixture(t, "testdata/golden/response_thinking.json")
+	want := &llm.Response{
+		Message: llm.Message{
+			Role: llm.RoleAssistant,
+			Blocks: []llm.Block{
+				llm.Thinking{Text: "7 times 8 is 56."},
+				llm.Text{Text: "56"},
+			},
+		},
+		StopReason: "stop",
+		Usage:      llm.Usage{InputTokens: 20, OutputTokens: 12},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("fromResponse() mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestFromResponseSynthesizesMissingID(t *testing.T) {
 	got := decodeFixture(t, "testdata/golden/response_missing_id.json")
 	if len(got.Message.Blocks) != 1 {

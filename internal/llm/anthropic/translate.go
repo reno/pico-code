@@ -31,6 +31,9 @@ func toParams(req llm.Request, model string) (sdk.MessageNewParams, error) {
 	if len(req.StopSequences) > 0 {
 		params.StopSequences = req.StopSequences
 	}
+	// req.Think (16.1) is intentionally ignored here: the Messages API has
+	// no equivalent yet, and Request.Think is defined to be a no-op for a
+	// provider that doesn't support it, not an error.
 
 	msgs := make([]sdk.MessageParam, len(req.Messages))
 	for i, m := range req.Messages {

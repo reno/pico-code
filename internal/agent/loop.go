@@ -44,6 +44,7 @@ type Agent struct {
 	turnUsages       []llm.Usage
 	compaction       CompactionPolicy
 	lastGuardTripped bool
+	think            bool
 }
 
 // New returns an Agent ready to run turns against provider, using registry
@@ -110,7 +111,16 @@ func (a *Agent) request() llm.Request {
 		Messages:  a.history.Snapshot(),
 		Tools:     a.tools.Definitions(),
 		MaxTokens: a.maxTokens,
+		Think:     a.think,
 	}
+}
+
+// SetThink sets whether a subsequent Run/RunStream call asks the provider
+// for a Thinking block (16.1) — a post-construction setter, like
+// SetCompactionPolicy, rather than a New parameter, so the many existing
+// callers that don't care about it are unaffected.
+func (a *Agent) SetThink(think bool) {
+	a.think = think
 }
 
 // roundState carries the bookkeeping Run and RunStream both accumulate
