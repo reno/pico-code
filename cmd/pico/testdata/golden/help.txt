@@ -1,0 +1,5 @@
+/help         list available commands
+/usage        show cumulative and last-turn token usage
+/new          start a new, unsaved session
+/save [name]  save the current session to disk
+/load <name>  load a saved session from disk
