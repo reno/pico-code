@@ -110,6 +110,7 @@ func toUserMessages(blocks []llm.Block) ([]api.Message, error) {
 func toAssistantMessages(blocks []llm.Block) ([]api.Message, error) {
 	msg := api.Message{Role: "assistant"}
 	var text strings.Builder
+	var thinking strings.Builder
 	for _, b := range blocks {
 		switch v := b.(type) {
 		case llm.Text:
@@ -117,6 +118,16 @@ func toAssistantMessages(blocks []llm.Block) ([]api.Message, error) {
 				text.WriteByte('\n')
 			}
 			text.WriteString(v.Text)
+		case llm.Thinking:
+			// Replayed back on a later turn (this assistant message is
+			// already in history): Ollama's own Message shape carries
+			// Thinking on a request the same way it does on a response,
+			// so round-tripping it needs no special-casing beyond not
+			// falling into the unsupported-block-type error below.
+			if thinking.Len() > 0 {
+				thinking.WriteByte('\n')
+			}
+			thinking.WriteString(v.Text)
 		case llm.ToolUse:
 			args, err := toToolCallArguments(v.Input)
 			if err != nil {
@@ -131,6 +142,7 @@ func toAssistantMessages(blocks []llm.Block) ([]api.Message, error) {
 		}
 	}
 	msg.Content = text.String()
+	msg.Thinking = thinking.String()
 	return []api.Message{msg}, nil
 }
 

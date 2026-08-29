@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/ollama/ollama/api"
 
 	"github.com/reno/pico-code/internal/llm"
 )
@@ -102,6 +103,49 @@ func TestToRequestThinkUnsetLeavesThinkNil(t *testing.T) {
 	}
 	if ar.Think != nil {
 		t.Errorf("Think = %+v, want nil when Request.Think is unset", ar.Think)
+	}
+}
+
+// TestToRequestRoundTripsThinkingBlockFromHistory is a regression test: a
+// prior assistant turn's Thinking block (fromResponse prepends one ahead
+// of Text when the model returns one) gets replayed back on the next
+// request once it's sitting in history, same as any other block. Before
+// this fix, toAssistantMessages had no case for llm.Thinking at all, so a
+// second turn after a thinking-enabled reply failed outright with
+// "unsupported block type llm.Thinking in assistant message".
+func TestToRequestRoundTripsThinkingBlockFromHistory(t *testing.T) {
+	req := llm.Request{
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: "what's 7*8?"}}},
+			{
+				Role: llm.RoleAssistant,
+				Blocks: []llm.Block{
+					llm.Thinking{Text: "7 times 8 is 56."},
+					llm.Text{Text: "56"},
+				},
+			},
+			{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: "and 6*9?"}}},
+		},
+	}
+	ar, err := toRequest(req, "qwen3:8b", 4096)
+	if err != nil {
+		t.Fatalf("toRequest() error = %v", err)
+	}
+
+	var assistant *api.Message
+	for i := range ar.Messages {
+		if ar.Messages[i].Role == "assistant" {
+			assistant = &ar.Messages[i]
+		}
+	}
+	if assistant == nil {
+		t.Fatal("no assistant message in the translated request")
+	}
+	if assistant.Thinking != "7 times 8 is 56." {
+		t.Errorf("assistant.Thinking = %q, want the replayed thinking text", assistant.Thinking)
+	}
+	if assistant.Content != "56" {
+		t.Errorf("assistant.Content = %q, want %q", assistant.Content, "56")
 	}
 }
 
