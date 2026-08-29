@@ -62,3 +62,21 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request) (*llm.Response, er
 	recordutil.LogJSON(ctx, "anthropic: response", msg, p.apiKey)
 	return fromResponse(msg)
 }
+
+// ValidateModel implements llm.ModelSwitcher by looking model up through
+// the Models API; an unknown model surfaces as ErrNotFound via mapError,
+// the same sentinel Chat's own 404s map to.
+func (p *Provider) ValidateModel(ctx context.Context, model string) error {
+	_, err := p.client.Models.Get(ctx, model, sdk.ModelGetParams{})
+	if err != nil {
+		return mapError(err)
+	}
+	return nil
+}
+
+// SetModel implements llm.ModelSwitcher.
+func (p *Provider) SetModel(model string) {
+	p.model = model
+}
+
+var _ llm.ModelSwitcher = (*Provider)(nil)

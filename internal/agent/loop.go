@@ -170,6 +170,21 @@ func (a *Agent) CumulativeUsage() llm.Usage {
 	return total
 }
 
+// Provider returns the provider this Agent talks to, for a caller (the
+// /model command) that needs to check a provider-specific capability via a
+// type assertion — CLAUDE.md invariant 2 keeps those capabilities off the
+// shared Provider interface, so reaching one needs the concrete value.
+func (a *Agent) Provider() llm.Provider {
+	return a.provider
+}
+
+// Tools returns the registry this Agent executes tool calls against, for a
+// caller (the /cd command) that needs to reach a specific registered tool
+// directly rather than through a ToolUse block.
+func (a *Agent) Tools() *tools.Registry {
+	return a.tools
+}
+
 func (a *Agent) guardTripped(turns, totalTokens int, elapsed time.Duration, repeatStreak int) (string, bool) {
 	switch {
 	case a.guards.MaxTurns > 0 && turns >= a.guards.MaxTurns:

@@ -19,6 +19,18 @@ type Provider interface {
 	Stream(ctx context.Context, req Request) (<-chan Event, error)
 }
 
+// ModelSwitcher is implemented by providers that can change which model
+// they target after construction. ValidateModel checks a candidate name is
+// one the provider actually knows about — a Models API lookup for
+// Anthropic, a local /api/show probe for Ollama — before SetModel commits
+// to it. It's checked via a type assertion, not added to Provider: CLAUDE.md
+// invariant 2 keeps validation mechanics this different per backend out of
+// the shared interface.
+type ModelSwitcher interface {
+	ValidateModel(ctx context.Context, model string) error
+	SetModel(model string)
+}
+
 // Factory constructs a Provider from resolved config. Adapters register one
 // under their name via Register, typically from an init() func.
 type Factory func(cfg *config.Config) (Provider, error)

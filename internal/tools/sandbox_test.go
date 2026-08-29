@@ -112,3 +112,63 @@ func TestSandboxResolveAllowsNotYetExistingPathInsideRoot(t *testing.T) {
 		t.Errorf("Resolve() = %q, want %q", resolved, want)
 	}
 }
+
+// TestSandboxRerootSwitchesRoot is 11.3's AC for /cd: after re-rooting, a
+// path reachable only from the new root resolves, and one under the old
+// root is now rejected as escaping the sandbox.
+func TestSandboxRerootSwitchesRoot(t *testing.T) {
+	oldRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(oldRoot, "old.txt"), []byte("old"), 0o600); err != nil {
+		t.Fatalf("WriteFile(old.txt) error = %v", err)
+	}
+	newRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(newRoot, "new.txt"), []byte("new"), 0o600); err != nil {
+		t.Fatalf("WriteFile(new.txt) error = %v", err)
+	}
+
+	sandbox, err := NewSandbox(oldRoot, nil)
+	if err != nil {
+		t.Fatalf("NewSandbox() error = %v", err)
+	}
+	if _, err := sandbox.Resolve("old.txt"); err != nil {
+		t.Fatalf("Resolve(old.txt) before Reroot() error = %v", err)
+	}
+
+	if err := sandbox.Reroot(newRoot); err != nil {
+		t.Fatalf("Reroot() error = %v", err)
+	}
+
+	if _, err := sandbox.Resolve("new.txt"); err != nil {
+		t.Errorf("Resolve(new.txt) after Reroot() error = %v, want it reachable from the new root", err)
+	}
+	if _, err := sandbox.Resolve(filepath.Join(oldRoot, "old.txt")); !errors.Is(err, ErrPathEscapesSandbox) {
+		t.Errorf("Resolve(old.txt) after Reroot() error = %v, want %v (the old root is no longer inside the sandbox)", err, ErrPathEscapesSandbox)
+	}
+}
+
+// TestSandboxRerootRefusesMissingOrUnreadableTarget is 11.3's other AC:
+// Reroot refuses a target that doesn't exist, leaving the sandbox at its
+// original root.
+func TestSandboxRerootRefusesMissingOrUnreadableTarget(t *testing.T) {
+	root := t.TempDir()
+	sandbox, err := NewSandbox(root, nil)
+	if err != nil {
+		t.Fatalf("NewSandbox() error = %v", err)
+	}
+
+	missing := filepath.Join(root, "does-not-exist")
+	if err := sandbox.Reroot(missing); err == nil {
+		t.Fatal("Reroot(missing) error = nil, want an error for a nonexistent target")
+	}
+
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("EvalSymlinks() error = %v", err)
+	}
+	if _, err := sandbox.Resolve("."); err != nil {
+		t.Fatalf("Resolve(.) after a refused Reroot() error = %v", err)
+	}
+	if got, _ := sandbox.Resolve("."); got != resolvedRoot {
+		t.Errorf("sandbox root = %q after a refused Reroot(), want the original %q unchanged", got, resolvedRoot)
+	}
+}

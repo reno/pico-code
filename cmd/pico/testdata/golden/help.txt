@@ -1,8 +1,10 @@
-/help         list available commands
-/usage        show cumulative and last-turn token usage
-/new          start a new, unsaved session
-/save [name]  save the current session to disk
-/load <name>  load a saved session from disk
-/clear        clear the terminal scrollback (the conversation history is kept)
-/compact      summarize older turns now and report the token estimate
-/exit         save the session and exit, like Ctrl+D
+/help                           list available commands
+/usage                          show cumulative and last-turn token usage
+/new                            start a new, unsaved session
+/save [name]                    save the current session to disk
+/load <name>                    load a saved session from disk
+/clear                          clear the terminal scrollback (the conversation history is kept)
+/compact                        summarize older turns now and report the token estimate
+/exit                           save the session and exit, like Ctrl+D
+/cd <path>                      re-root the workspace sandbox
+/model <name> [context-window]  switch models, validated against the active provider

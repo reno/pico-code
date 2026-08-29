@@ -42,6 +42,13 @@ func (t *ReadFileTool) Description() string {
 // Schema implements tools.Tool.
 func (t *ReadFileTool) Schema() json.RawMessage { return t.schema }
 
+// Sandbox returns the Sandbox this tool is confined to. read_file is always
+// registered (unlike write_file or run_command), so a caller that needs to
+// re-root the workspace (the /cd command) can reach the shared Sandbox
+// instance through it without the registry exposing sandboxes as a concept
+// of its own.
+func (t *ReadFileTool) Sandbox() *Sandbox { return t.sandbox }
+
 // Run reads the requested file and returns its contents (or line range),
 // truncated to defaultByteBudget.
 func (t *ReadFileTool) Run(_ context.Context, input json.RawMessage) (string, error) {

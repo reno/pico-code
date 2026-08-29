@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/reno/pico-code/internal/agent"
 	"github.com/reno/pico-code/internal/history"
+	"github.com/reno/pico-code/internal/llm"
+	"github.com/reno/pico-code/internal/tools"
 )
 
 // errExit and errClearScrollback are handleCommand's two sentinel results:
@@ -48,6 +51,8 @@ func init() {
 		{name: "clear", summary: "clear the terminal scrollback (the conversation history is kept)", run: runClearCommand},
 		{name: "compact", summary: "summarize older turns now and report the token estimate", run: runCompactCommand},
 		{name: "exit", summary: "save the session and exit, like Ctrl+D", run: runExitCommand},
+		{name: "cd", args: "<path>", summary: "re-root the workspace sandbox", run: runCdCommand},
+		{name: "model", args: "<name> [context-window]", summary: "switch models, validated against the active provider", run: runModelCommand},
 	}
 }
 
@@ -177,6 +182,94 @@ func runExitCommand(_ context.Context, out io.Writer, _ *agent.Agent, h *history
 		return werr
 	}
 	return errExit
+}
+
+// sandboxProvider is satisfied by any registered tool that exposes the
+// shared workspace Sandbox — every filesystem tool (read_file, list_dir,
+// write_file) is constructed with the same *tools.Sandbox pointer, so
+// reaching it through any one of them re-roots every filesystem tool at
+// once. read_file is always registered (buildRegistry never gates it
+// behind a flag, unlike write_file/run_command), so it's the one this
+// looks up.
+type sandboxProvider interface {
+	Sandbox() *tools.Sandbox
+}
+
+// runCdCommand re-roots the workspace sandbox to arg, refusing (and leaving
+// the sandbox untouched) if it doesn't exist or can't be resolved —
+// Sandbox.Reroot already enforces that the same way NewSandbox does at
+// startup.
+func runCdCommand(_ context.Context, out io.Writer, ag *agent.Agent, _ *history.History, _ *session, arg string) error {
+	if arg == "" {
+		_, err := fmt.Fprintln(out, "usage: /cd <path>")
+		return err
+	}
+	t, err := ag.Tools().Get("read_file")
+	if err != nil {
+		_, werr := fmt.Fprintf(out, "cd failed: %v\n", err)
+		return werr
+	}
+	sb, ok := t.(sandboxProvider)
+	if !ok {
+		_, werr := fmt.Fprintln(out, "cd failed: workspace is not sandboxed")
+		return werr
+	}
+	if err := sb.Sandbox().Reroot(arg); err != nil {
+		_, werr := fmt.Fprintf(out, "cd failed: %v\n", err)
+		return werr
+	}
+	_, err = fmt.Fprintf(out, "workspace root changed to %s\n", arg)
+	return err
+}
+
+// runModelCommand switches the active provider's model, validating the
+// name first (llm.ModelSwitcher.ValidateModel) so an unknown model errors
+// without mutating the provider or the compaction policy. arg is "<name>"
+// or "<name> <context-window>"; the window is otherwise left unchanged,
+// since none of this codebase's providers can safely auto-detect one for
+// every backend (Anthropic can via its Models API; Ollama can't, per
+// ValidateModel's doc comment) and CLAUDE.md already treats a model's
+// context window as an explicit, user-set value (--context-window,
+// --num-ctx) rather than one inferred from the model name.
+func runModelCommand(ctx context.Context, out io.Writer, ag *agent.Agent, h *history.History, _ *session, arg string) error {
+	fields := strings.Fields(arg)
+	if len(fields) == 0 || len(fields) > 2 {
+		_, err := fmt.Fprintln(out, "usage: /model <name> [context-window]")
+		return err
+	}
+	name := fields[0]
+
+	switcher, ok := ag.Provider().(llm.ModelSwitcher)
+	if !ok {
+		_, err := fmt.Fprintf(out, "model failed: provider %q does not support switching models\n", ag.Provider().Name())
+		return err
+	}
+	if err := switcher.ValidateModel(ctx, name); err != nil {
+		_, werr := fmt.Fprintf(out, "model failed: %v\n", err)
+		return werr
+	}
+
+	policy := ag.CompactionPolicy()
+	if len(fields) == 2 {
+		window, err := strconv.Atoi(fields[1])
+		if err != nil || window <= 0 {
+			_, werr := fmt.Fprintf(out, "model failed: invalid context window %q\n", fields[1])
+			return werr
+		}
+		policy.ContextWindow = window
+	}
+
+	switcher.SetModel(name)
+	ag.SetCompactionPolicy(policy)
+
+	if policy.ContextWindow > 0 {
+		if used := history.EstimateTokens(h.Snapshot()); used > policy.ContextWindow {
+			_, err := fmt.Fprintf(out, "switched model to %s (context window %d); warning: current usage (~%d tokens) already exceeds it, compaction will run on the next turn\n", name, policy.ContextWindow, used)
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(out, "switched model to %s\n", name)
+	return err
 }
 
 func printUsage(out io.Writer, ag *agent.Agent) {

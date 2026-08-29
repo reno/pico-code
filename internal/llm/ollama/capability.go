@@ -35,36 +35,10 @@ func (p *Provider) supportsTools(ctx context.Context) (bool, error) {
 }
 
 func (p *Provider) probeToolSupport(ctx context.Context) (bool, error) {
-	body, err := json.Marshal(api.ShowRequest{Model: p.model})
+	show, err := p.probeShow(ctx, p.model)
 	if err != nil {
-		return false, fmt.Errorf("ollama: marshal /api/show request: %w", err)
+		return false, err
 	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/api/show", bytes.NewReader(body))
-	if err != nil {
-		return false, fmt.Errorf("ollama: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	res, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		return false, fmt.Errorf("ollama: %w", err)
-	}
-	defer func() { _ = res.Body.Close() }()
-
-	respBody, err := io.ReadAll(res.Body)
-	if err != nil {
-		return false, fmt.Errorf("ollama: read /api/show response: %w", err)
-	}
-	if res.StatusCode >= http.StatusBadRequest {
-		return false, fmt.Errorf("ollama: /api/show failed with status %d: %s", res.StatusCode, bytes.TrimSpace(respBody))
-	}
-
-	var show api.ShowResponse
-	if err := json.Unmarshal(respBody, &show); err != nil {
-		return false, fmt.Errorf("ollama: decode /api/show response: %w", err)
-	}
-
 	for _, c := range show.Capabilities {
 		if c == model.CapabilityTools {
 			return true, nil
@@ -72,6 +46,62 @@ func (p *Provider) probeToolSupport(ctx context.Context) (bool, error) {
 	}
 	return false, nil
 }
+
+// probeShow calls /api/show for modelName, the low-level request both
+// probeToolSupport (for p.model, cached via supportsTools) and
+// ValidateModel (for an arbitrary candidate, uncached) build on. A model
+// /api/show doesn't recognize comes back as a non-2xx status, surfaced here
+// as a plain error.
+func (p *Provider) probeShow(ctx context.Context, modelName string) (api.ShowResponse, error) {
+	body, err := json.Marshal(api.ShowRequest{Model: modelName})
+	if err != nil {
+		return api.ShowResponse{}, fmt.Errorf("ollama: marshal /api/show request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/api/show", bytes.NewReader(body))
+	if err != nil {
+		return api.ShowResponse{}, fmt.Errorf("ollama: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	res, err := p.httpClient.Do(httpReq)
+	if err != nil {
+		return api.ShowResponse{}, fmt.Errorf("ollama: %w", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	respBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		return api.ShowResponse{}, fmt.Errorf("ollama: read /api/show response: %w", err)
+	}
+	if res.StatusCode >= http.StatusBadRequest {
+		return api.ShowResponse{}, fmt.Errorf("ollama: /api/show failed with status %d: %s", res.StatusCode, bytes.TrimSpace(respBody))
+	}
+
+	var show api.ShowResponse
+	if err := json.Unmarshal(respBody, &show); err != nil {
+		return api.ShowResponse{}, fmt.Errorf("ollama: decode /api/show response: %w", err)
+	}
+	return show, nil
+}
+
+// ValidateModel implements llm.ModelSwitcher by probing /api/show for
+// modelName. Ollama's /api/show has no context-window field that's stable
+// across model families (it's buried in a per-family key inside
+// ModelInfo), so unlike Anthropic's ValidateModel this never derives one;
+// num_ctx stays the explicit, user-set knob CLAUDE.md already requires it
+// to be.
+func (p *Provider) ValidateModel(ctx context.Context, modelName string) error {
+	_, err := p.probeShow(ctx, modelName)
+	return err
+}
+
+// SetModel implements llm.ModelSwitcher.
+func (p *Provider) SetModel(modelName string) {
+	p.model = modelName
+}
+
+var _ llm.ModelSwitcher = (*Provider)(nil)
 
 // checkToolSupport gates a request that carries tool definitions: it is a
 // no-op for a tool-less request (the common case, and the only case in

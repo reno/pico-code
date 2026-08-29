@@ -32,6 +32,13 @@ func (a *Agent) SetCompactionPolicy(p CompactionPolicy) {
 	a.compaction = p
 }
 
+// CompactionPolicy returns the policy currently in effect, so a caller (the
+// /model command) can change just ContextWindow without having to know or
+// clobber TriggerFraction and KeepTurns.
+func (a *Agent) CompactionPolicy() CompactionPolicy {
+	return a.compaction
+}
+
 // maybeCompact summarizes the oldest turns into a single synthetic message
 // once history's estimated size crosses the configured threshold. It is
 // best-effort: a failed summarization call (or a disabled/inapplicable

@@ -222,6 +222,181 @@ func TestExitCommandSavesSessionBeforeSignalingExit(t *testing.T) {
 	}
 }
 
+// fakeSwitchableProvider adds llm.ModelSwitcher to fakeChatProvider, for
+// testing /model without a real backend. unknownModel, if set, makes
+// ValidateModel fail for that one name; every other name validates.
+type fakeSwitchableProvider struct {
+	*fakeChatProvider
+	unknownModel string
+	model        string
+}
+
+func (f *fakeSwitchableProvider) ValidateModel(_ context.Context, model string) error {
+	if model == f.unknownModel {
+		return fmt.Errorf("model %q not found", model)
+	}
+	return nil
+}
+
+func (f *fakeSwitchableProvider) SetModel(model string) {
+	f.model = model
+}
+
+// readFileVia runs the registry's read_file tool for path, for assertions
+// about which paths the sandbox currently accepts.
+func readFileVia(t *testing.T, registry *tools.Registry, path string) (string, error) {
+	t.Helper()
+	tool, err := registry.Get("read_file")
+	if err != nil {
+		t.Fatalf("Get(read_file) error = %v", err)
+	}
+	input, err := json.Marshal(map[string]string{"path": path})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	return tool.Run(context.Background(), input)
+}
+
+// TestCdCommandRerootsWorkspaceSandbox is 11.3's AC for /cd: after /cd, a
+// read_file reachable only from the new root succeeds and one under the
+// old root is rejected.
+func TestCdCommandRerootsWorkspaceSandbox(t *testing.T) {
+	oldRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(oldRoot, "old.txt"), []byte("old"), 0o600); err != nil {
+		t.Fatalf("WriteFile(old.txt) error = %v", err)
+	}
+	newRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(newRoot, "new.txt"), []byte("new"), 0o600); err != nil {
+		t.Fatalf("WriteFile(new.txt) error = %v", err)
+	}
+
+	registry, err := buildRegistry(&config.Config{Workspace: oldRoot})
+	if err != nil {
+		t.Fatalf("buildRegistry() error = %v", err)
+	}
+	h := history.New()
+	ag := agent.New(&fakeChatProvider{reply: "ok"}, registry, h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+
+	if _, err := readFileVia(t, registry, "old.txt"); err != nil {
+		t.Fatalf("read_file(old.txt) before /cd error = %v", err)
+	}
+
+	var out bytes.Buffer
+	if _, err := handleCommand(context.Background(), &out, ag, h, noSession(t), "cd", newRoot); err != nil {
+		t.Fatalf("handleCommand(cd) error = %v", err)
+	}
+	if !strings.Contains(out.String(), "workspace root changed") {
+		t.Errorf("output = %q, want a confirmation", out.String())
+	}
+
+	if _, err := readFileVia(t, registry, "new.txt"); err != nil {
+		t.Errorf("read_file(new.txt) after /cd error = %v, want it reachable from the new root", err)
+	}
+	if _, err := readFileVia(t, registry, filepath.Join(oldRoot, "old.txt")); err == nil {
+		t.Error("read_file(old.txt) after /cd error = nil, want the old root rejected as escaping the sandbox")
+	}
+}
+
+// TestCdCommandRejectsMissingTarget is 11.3's other AC for /cd: a missing
+// target is refused and the original root stays active.
+func TestCdCommandRejectsMissingTarget(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "marker.txt"), []byte("marker"), 0o600); err != nil {
+		t.Fatalf("WriteFile(marker.txt) error = %v", err)
+	}
+	registry, err := buildRegistry(&config.Config{Workspace: root})
+	if err != nil {
+		t.Fatalf("buildRegistry() error = %v", err)
+	}
+	h := history.New()
+	ag := agent.New(&fakeChatProvider{reply: "ok"}, registry, h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+
+	var out bytes.Buffer
+	if _, err := handleCommand(context.Background(), &out, ag, h, noSession(t), "cd", filepath.Join(root, "does-not-exist")); err != nil {
+		t.Fatalf("handleCommand(cd) error = %v", err)
+	}
+	if !strings.Contains(out.String(), "cd failed") {
+		t.Errorf("output = %q, want a failure message", out.String())
+	}
+	if _, err := readFileVia(t, registry, "marker.txt"); err != nil {
+		t.Errorf("read_file(marker.txt) after a refused /cd error = %v, want the original root still active", err)
+	}
+}
+
+// TestModelCommandRejectsUnknownWithoutMutating is 11.3's AC for /model: a
+// name the provider does not know errors without mutating the provider's
+// model or the compaction policy.
+func TestModelCommandRejectsUnknownWithoutMutating(t *testing.T) {
+	h := history.New()
+	provider := &fakeSwitchableProvider{fakeChatProvider: &fakeChatProvider{reply: "ok"}, unknownModel: "ghost-model", model: "original-model"}
+	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+	ag.SetCompactionPolicy(agent.CompactionPolicy{ContextWindow: 500, TriggerFraction: 0.75, KeepTurns: 6})
+
+	var out bytes.Buffer
+	if _, err := handleCommand(context.Background(), &out, ag, h, noSession(t), "model", "ghost-model"); err != nil {
+		t.Fatalf("handleCommand(model) error = %v", err)
+	}
+	if !strings.Contains(out.String(), "model failed") {
+		t.Errorf("output = %q, want a failure message", out.String())
+	}
+	if provider.model != "original-model" {
+		t.Errorf("provider.model = %q, want it unchanged after a rejected /model", provider.model)
+	}
+	if got := ag.CompactionPolicy().ContextWindow; got != 500 {
+		t.Errorf("CompactionPolicy().ContextWindow = %d, want 500 unchanged", got)
+	}
+}
+
+// TestModelCommandErrorsWhenProviderCannotSwitch covers a provider that
+// doesn't implement llm.ModelSwitcher at all (every fakeChatProvider in the
+// rest of this file, and any future provider that never adds it).
+func TestModelCommandErrorsWhenProviderCannotSwitch(t *testing.T) {
+	h := history.New()
+	ag := agent.New(&fakeChatProvider{reply: "ok"}, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+
+	var out bytes.Buffer
+	if _, err := handleCommand(context.Background(), &out, ag, h, noSession(t), "model", "some-model"); err != nil {
+		t.Fatalf("handleCommand(model) error = %v", err)
+	}
+	if !strings.Contains(out.String(), "does not support switching models") {
+		t.Errorf("output = %q, want a does-not-support message", out.String())
+	}
+}
+
+// TestModelCommandSwitchingSmallerWindowTriggersCompactionNextTurn is
+// 11.3's AC: switching to a smaller context window triggers the
+// compaction check on the next turn.
+func TestModelCommandSwitchingSmallerWindowTriggersCompactionNextTurn(t *testing.T) {
+	h := toolHeavyHistory(8)
+	before := history.EstimateTokens(h.Snapshot())
+
+	provider := &fakeSwitchableProvider{fakeChatProvider: &fakeChatProvider{reply: "concise summary of the earlier turns"}, model: "old-model"}
+	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+	ag.SetCompactionPolicy(agent.CompactionPolicy{ContextWindow: 1_000_000, TriggerFraction: 0.75, KeepTurns: 2})
+
+	newWindow := before / 2
+	var out bytes.Buffer
+	if _, err := handleCommand(context.Background(), &out, ag, h, noSession(t), "model", fmt.Sprintf("new-model %d", newWindow)); err != nil {
+		t.Fatalf("handleCommand(model) error = %v", err)
+	}
+	if !strings.Contains(out.String(), "compaction will run on the next turn") {
+		t.Errorf("output = %q, want a compaction warning", out.String())
+	}
+	if provider.model != "new-model" {
+		t.Errorf("provider.model = %q, want %q", provider.model, "new-model")
+	}
+
+	if _, err := ag.Run(context.Background(), "one more question"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if err := h.Validate(); err != nil {
+		t.Fatalf("Validate() after the next turn error = %v", err)
+	}
+	if after := history.EstimateTokens(h.Snapshot()); after >= before {
+		t.Errorf("estimated tokens after the next turn = %d, want less than the pre-/model estimate (%d): the smaller window should have triggered compaction", after, before)
+	}
+}
+
 func TestLevenshtein(t *testing.T) {
 	tests := []struct {
 		a, b string

@@ -31,18 +31,45 @@ type Sandbox struct {
 // Sandbox scoped to it. denyGlobs are checked in addition to
 // defaultDenyGlobs.
 func NewSandbox(root string, denyGlobs []string) (*Sandbox, error) {
-	abs, err := filepath.Abs(root)
+	resolved, err := resolveRoot(root)
 	if err != nil {
-		return nil, fmt.Errorf("tools: sandbox root %q: %w", root, err)
-	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return nil, fmt.Errorf("tools: sandbox root %q: %w", root, err)
+		return nil, err
 	}
 	all := make([]string, 0, len(defaultDenyGlobs)+len(denyGlobs))
 	all = append(all, defaultDenyGlobs...)
 	all = append(all, denyGlobs...)
 	return &Sandbox{root: resolved, denyGlobs: all}, nil
+}
+
+// Reroot re-resolves root the same way NewSandbox does and, on success,
+// replaces s's root in place — every tool sharing this *Sandbox (they're
+// all constructed with the same pointer) sees the new root immediately,
+// without the caller having to rebuild the tool set. It refuses (leaving s
+// unchanged) if root doesn't exist or can't be resolved, for the /cd
+// command (CLAUDE.md phase 11.3).
+func (s *Sandbox) Reroot(root string) error {
+	resolved, err := resolveRoot(root)
+	if err != nil {
+		return err
+	}
+	s.root = resolved
+	return nil
+}
+
+// resolveRoot turns root into an absolute, symlink-free path, refusing one
+// that doesn't exist or can't be resolved (EvalSymlinks has to stat every
+// path component, so a missing or permission-denied target both surface
+// here as an error).
+func resolveRoot(root string) (string, error) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("tools: workspace root %q: %w", root, err)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("tools: workspace root %q: %w", root, err)
+	}
+	return resolved, nil
 }
 
 // Resolve validates path (relative to the sandbox root, or absolute) and
