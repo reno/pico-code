@@ -42,6 +42,39 @@ export ANTHROPIC_API_KEY=sk-ant-...
 Nothing else to install. Retries on 429/5xx happen inside the SDK; a bad key
 or an unreachable network surfaces as a clear error rather than a hang.
 
+#### Prompt caching
+
+Every request marks two `cache_control` breakpoints: one on the system
+prompt, one on the last block of the last message. Because history only
+ever grows by appending, each new turn's request shares an identical
+prefix with the one before it up to that second breakpoint — the provider
+serves everything up to there from cache and only charges full price for
+the newly appended tail. A `/compact` (or automatic compaction, 8.2)
+rewrites the oldest turns into a fresh synthetic summary, which changes
+the cached prefix's bytes; the next request simply writes a new cache
+entry there instead of ever risking a stale one.
+
+The savings are real but numbers vary a lot by conversation shape, so
+here's the arithmetic rather than a single "X% faster" claim, using
+`claude-sonnet-4-5`'s published per-token rates ($3.00 input / $3.75 cache
+write / $0.30 cache read, per million tokens — see `internal/config/pricing.go`
+for the same "these are estimates" caveat `/usage` carries). For a 2,000
+token stable prefix (a typical system prompt plus tool definitions) reused
+across 10 requests within the cache's TTL:
+
+| | cost |
+|---|---|
+| without caching (10 × full-price reads of the 2,000 tokens) | 10 × 2000 × $3.00 / 1e6 = **$0.0600** |
+| with caching (1 write + 9 reads of the 2,000 tokens) | (2000 × $3.75 / 1e6) + 9 × (2000 × $0.30 / 1e6) = $0.0075 + $0.0054 = **$0.0129** |
+
+That's a ~78% reduction on the *stable-prefix portion* of input cost over
+10 turns, and it keeps improving the longer the conversation runs — the
+one-time write premium amortizes away while every later turn keeps paying
+the ~10×-cheaper read rate. It only covers the part of each request that's
+actually stable; the growing tail (each turn's own new messages) is never
+cached and always costs full price, so a whole conversation's total
+savings will be smaller than this in practice.
+
 ### Ollama
 
 ```bash

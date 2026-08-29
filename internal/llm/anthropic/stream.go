@@ -36,6 +36,8 @@ func (a *streamAccumulator) handle(ctx context.Context, event sdk.MessageStreamE
 		ms := event.AsMessageStart()
 		a.usage.InputTokens = int(ms.Message.Usage.InputTokens)
 		a.usage.OutputTokens = int(ms.Message.Usage.OutputTokens)
+		a.usage.CacheWriteTokens = int(ms.Message.Usage.CacheCreationInputTokens)
+		a.usage.CacheReadTokens = int(ms.Message.Usage.CacheReadInputTokens)
 		return nil, nil
 
 	case "content_block_start":
@@ -86,6 +88,12 @@ func (a *streamAccumulator) handle(ctx context.Context, event sdk.MessageStreamE
 		}
 		if md.Usage.InputTokens > 0 {
 			a.usage.InputTokens = int(md.Usage.InputTokens)
+		}
+		if md.Usage.CacheCreationInputTokens > 0 {
+			a.usage.CacheWriteTokens = int(md.Usage.CacheCreationInputTokens)
+		}
+		if md.Usage.CacheReadInputTokens > 0 {
+			a.usage.CacheReadTokens = int(md.Usage.CacheReadInputTokens)
 		}
 		return nil, nil
 

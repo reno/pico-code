@@ -107,3 +107,52 @@ func TestStreamCancelledContextStopsPromptly(t *testing.T) {
 		t.Fatal("CollectStream() error = nil, want an error for a cancelled stream")
 	}
 }
+
+// cacheUsageSSE is a minimal message_start/content_block/message_delta/
+// message_stop stream carrying cache fields on message_start, standing in
+// for the first request of a cached exchange (a cache write).
+const cacheUsageSSE = `event: message_start
+data: {"message":{"content":[],"id":"msg_cache_1","model":"claude-test-model","role":"assistant","stop_reason":null,"stop_sequence":null,"type":"message","usage":{"input_tokens":20,"output_tokens":1,"cache_creation_input_tokens":500,"cache_read_input_tokens":0}},"type":"message_start"}
+
+event: content_block_start
+data: {"content_block":{"text":"","type":"text"},"index":0,"type":"content_block_start"}
+
+event: content_block_delta
+data: {"delta":{"text":"ok","type":"text_delta"},"index":0,"type":"content_block_delta"}
+
+event: content_block_stop
+data: {"index":0,"type":"content_block_stop"}
+
+event: message_delta
+data: {"delta":{"stop_reason":"end_turn","stop_sequence":null},"type":"message_delta","usage":{"output_tokens":1}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+
+// TestStreamAccumulatorParsesCacheWriteUsage is half of 15.2's AC (the
+// streaming path's share of "a recorded exchange shows a cache write");
+// TestFromResponseParsesCacheWriteThenCacheRead in translate_test.go covers
+// the non-streaming path for both write and read.
+func TestStreamAccumulatorParsesCacheWriteUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(cacheUsageSSE))
+	}))
+	defer srv.Close()
+
+	p := testProvider(srv.URL)
+	ch, err := p.Stream(context.Background(), testChatRequest())
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	resp, err := llm.CollectStream(context.Background(), ch)
+	if err != nil {
+		t.Fatalf("CollectStream() error = %v", err)
+	}
+	if resp.Usage.CacheWriteTokens != 500 || resp.Usage.CacheReadTokens != 0 {
+		t.Errorf("Usage = %+v, want CacheWriteTokens 500, CacheReadTokens 0", resp.Usage)
+	}
+}

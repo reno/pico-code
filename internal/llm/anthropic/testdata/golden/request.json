@@ -30,6 +30,9 @@
     {
       "content": [
         {
+          "cache_control": {
+            "type": "ephemeral"
+          },
           "content": [
             {
               "text": "15C, cloudy",
@@ -47,6 +50,9 @@
   "model": "claude-test-model",
   "system": [
     {
+      "cache_control": {
+        "type": "ephemeral"
+      },
       "text": "You are a helpful weather assistant.",
       "type": "text"
     }

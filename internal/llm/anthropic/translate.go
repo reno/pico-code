@@ -23,7 +23,7 @@ func toParams(req llm.Request, model string) (sdk.MessageNewParams, error) {
 	}
 
 	if req.System != "" {
-		params.System = []sdk.TextBlockParam{{Text: req.System}}
+		params.System = []sdk.TextBlockParam{{Text: req.System, CacheControl: sdk.NewCacheControlEphemeralParam()}}
 	}
 	if req.Temperature != 0 {
 		params.Temperature = param.NewOpt(req.Temperature)
@@ -37,6 +37,17 @@ func toParams(req llm.Request, model string) (sdk.MessageNewParams, error) {
 		blocks, err := toContentBlocks(m.Blocks)
 		if err != nil {
 			return sdk.MessageNewParams{}, fmt.Errorf("message %d: %w", i, err)
+		}
+		// A second breakpoint on the last block of the last message marks
+		// "everything up to here is stable" for this request. Since
+		// history only ever grows by appending (invariant 3) — and
+		// compaction rewrites bytes at or before this point rather than
+		// after it — the next request's identical prefix is served from
+		// cache while its newly appended tail is written fresh, without
+		// needing to know anything about what changed since the request
+		// before it.
+		if i == len(req.Messages)-1 && len(blocks) > 0 {
+			setCacheControl(blocks[len(blocks)-1])
 		}
 		switch m.Role {
 		case llm.RoleUser:
@@ -66,6 +77,21 @@ func toParams(req llm.Request, model string) (sdk.MessageNewParams, error) {
 	}
 
 	return params, nil
+}
+
+// setCacheControl marks cb as a cache breakpoint in place. cb's Of* field
+// is itself a pointer (part of the SDK's tagged-union shape), so mutating
+// through it here reaches the same underlying block the caller's slice
+// already holds — no pointer receiver on cb needed.
+func setCacheControl(cb sdk.ContentBlockParamUnion) {
+	switch {
+	case cb.OfText != nil:
+		cb.OfText.CacheControl = sdk.NewCacheControlEphemeralParam()
+	case cb.OfToolUse != nil:
+		cb.OfToolUse.CacheControl = sdk.NewCacheControlEphemeralParam()
+	case cb.OfToolResult != nil:
+		cb.OfToolResult.CacheControl = sdk.NewCacheControlEphemeralParam()
+	}
 }
 
 func toContentBlocks(blocks []llm.Block) ([]sdk.ContentBlockParamUnion, error) {
@@ -118,8 +144,10 @@ func fromResponse(msg *sdk.Message) (*llm.Response, error) {
 		Message:    llm.Message{Role: llm.RoleAssistant, Blocks: blocks},
 		StopReason: string(msg.StopReason),
 		Usage: llm.Usage{
-			InputTokens:  int(msg.Usage.InputTokens),
-			OutputTokens: int(msg.Usage.OutputTokens),
+			InputTokens:      int(msg.Usage.InputTokens),
+			OutputTokens:     int(msg.Usage.OutputTokens),
+			CacheWriteTokens: int(msg.Usage.CacheCreationInputTokens),
+			CacheReadTokens:  int(msg.Usage.CacheReadInputTokens),
 		},
 	}, nil
 }
