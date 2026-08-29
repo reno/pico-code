@@ -444,9 +444,22 @@ func newTurnRunner(cfg *config.Config, ag *agent.Agent, out io.Writer) func(cont
 			return err
 		}
 	}
-	renderer := ui.PlainRenderer{Out: out}
+	renderer := &ui.PlainRenderer{Out: out}
 	return func(ctx context.Context, input string) error {
-		_, err := ag.RunStream(ctx, input, renderer)
+		text, err := ag.RunStream(ctx, input, renderer)
+		if err != nil {
+			return err
+		}
+		// A guard trip or an empty-reply explanation (16.1's --think can
+		// trigger the latter by exhausting the budget on thinking) is
+		// synthesized by the agent loop after the last round's Render
+		// call already returned, so it was never streamed as TextDelta
+		// events — renderer.WroteAny() is false for that round. An
+		// ordinary reply, by contrast, already printed itself live; this
+		// would otherwise double it.
+		if text != "" && !renderer.WroteAny() {
+			_, err = fmt.Fprintln(out, text)
+		}
 		return err
 	}
 }

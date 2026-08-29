@@ -148,7 +148,17 @@ func (a *Agent) runRound(ctx context.Context, resp *llm.Response, rs *roundState
 	calls := toolUseBlocks(resp.Message)
 	if len(calls) == 0 {
 		a.turnUsages = append(a.turnUsages, rs.usage)
-		return textOf(resp.Message), true
+		if text := textOf(resp.Message); text != "" {
+			return text, true
+		}
+		// The provider ended the turn (often stop_reason "length" — the
+		// model's own MaxTokens/context budget ran out, e.g. spent on a
+		// Thinking block, 16.1) without ever producing a Text block. Left
+		// alone this returns "" and the turn finalizes with nothing shown
+		// anywhere — no error, no transcript line, indistinguishable from
+		// a hang. An explanation, like a guard trip already gets, is the
+		// minimum a caller needs to know the turn ended, not silence.
+		return a.stopWithExplanation(fmt.Sprintf("Stopping: the model ended the turn (%s) without producing a reply.", resp.StopReason)), true
 	}
 
 	if sig := callSignature(calls); sig == rs.lastSignature {

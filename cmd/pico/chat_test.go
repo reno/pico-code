@@ -22,19 +22,35 @@ import (
 // fakeChatProvider returns one canned reply, enough to drive
 // runPlainChat's single-shot piped-input path without a real backend.
 // disallowStream, when set, makes Stream fail instead of succeed — used to
-// prove a --stream=false turn never calls it at all.
+// prove a --stream=false turn never calls it at all. An empty reply sends
+// no TextDelta at all (rather than one carrying empty text) so Stream can
+// stand in for a genuinely empty completion — e.g. a provider that hit its
+// own token budget without ever producing a Text block — with stopReason
+// defaulting to "end_turn" when unset.
 type fakeChatProvider struct {
 	reply          string
+	stopReason     string
 	disallowStream bool
 	usage          llm.Usage
 }
 
 func (f *fakeChatProvider) Name() string { return "fake" }
 
+func (f *fakeChatProvider) stopReasonOrDefault() string {
+	if f.stopReason != "" {
+		return f.stopReason
+	}
+	return "end_turn"
+}
+
 func (f *fakeChatProvider) Chat(context.Context, llm.Request) (*llm.Response, error) {
+	var blocks []llm.Block
+	if f.reply != "" {
+		blocks = []llm.Block{llm.Text{Text: f.reply}}
+	}
 	return &llm.Response{
-		Message:    llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.Text{Text: f.reply}}},
-		StopReason: "end_turn",
+		Message:    llm.Message{Role: llm.RoleAssistant, Blocks: blocks},
+		StopReason: f.stopReasonOrDefault(),
 		Usage:      f.usage,
 	}, nil
 }
@@ -44,10 +60,12 @@ func (f *fakeChatProvider) Stream(ctx context.Context, _ llm.Request) (<-chan ll
 		return nil, errors.New("fakeChatProvider: Stream must not be called when streaming is disabled")
 	}
 	return llm.StreamEvents(ctx, func(send func(llm.Event) bool) {
-		if !send(llm.TextDelta{Text: f.reply}) {
-			return
+		if f.reply != "" {
+			if !send(llm.TextDelta{Text: f.reply}) {
+				return
+			}
 		}
-		send(llm.MessageDone{StopReason: "end_turn"})
+		send(llm.MessageDone{StopReason: f.stopReasonOrDefault()})
 	}), nil
 }
 
@@ -101,6 +119,53 @@ func TestUsageCommandReportsCumulativeAcrossTurns(t *testing.T) {
 	}
 	if strings.ContainsRune(got, '\x1b') {
 		t.Errorf("output contains an ANSI escape byte: %q", got)
+	}
+}
+
+// TestStreamingTurnPrintsExplanationForAnEmptyReply is a regression test:
+// newTurnRunner's streaming path used to discard RunStream's returned text
+// entirely, relying solely on PlainRenderer's live TextDelta printing. A
+// guard trip or an empty-reply explanation (16.1's --think can trigger the
+// latter by exhausting the budget on thinking) is synthesized by the agent
+// loop after the last round's Render call already returned, so it was
+// never streamed as a TextDelta — the turn produced no output at all, with
+// no error either, indistinguishable from a hang.
+func TestStreamingTurnPrintsExplanationForAnEmptyReply(t *testing.T) {
+	provider := &fakeChatProvider{reply: "", stopReason: "length"}
+	h := history.New()
+	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+
+	var out bytes.Buffer
+	runTurn := newTurnRunner(&config.Config{Stream: true}, ag, &out)
+	if err := runTurn(context.Background(), "hi"); err != nil {
+		t.Fatalf("runTurn() error = %v", err)
+	}
+
+	got := out.String()
+	if got == "" {
+		t.Fatal("output is empty, want the empty-reply explanation printed")
+	}
+	if !strings.Contains(got, "length") {
+		t.Errorf("output = %q, want it to mention the stop reason %q", got, "length")
+	}
+}
+
+// TestStreamingTurnDoesNotDoublePrintAnOrdinaryReply guards the other side
+// of the same fix: an ordinary reply already streamed live via TextDelta
+// must not also get printed a second time from RunStream's returned text.
+func TestStreamingTurnDoesNotDoublePrintAnOrdinaryReply(t *testing.T) {
+	provider := &fakeChatProvider{reply: "hello there"}
+	h := history.New()
+	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
+
+	var out bytes.Buffer
+	runTurn := newTurnRunner(&config.Config{Stream: true}, ag, &out)
+	if err := runTurn(context.Background(), "hi"); err != nil {
+		t.Fatalf("runTurn() error = %v", err)
+	}
+
+	if got, want := out.String(), "hello there\n"; got != want {
+		t.Errorf("output = %q, want %q (printed exactly once)", got, want)
 	}
 }
 

@@ -17,6 +17,24 @@ import (
 // off.
 type PlainRenderer struct {
 	Out io.Writer
+
+	// wroteAny records whether the most recent Render call actually wrote
+	// any TextDelta text to Out, read back via WroteAny() by a caller
+	// (cmd/pico's streaming turn runner) that needs to know whether a
+	// non-empty final Response.Message text was already shown live or
+	// still needs printing — true for an ordinary reply (all its text
+	// streamed as it arrived), false when the round produced no TextDelta
+	// events at all, e.g. a guard-trip or empty-reply explanation (16.1's
+	// --think can trigger the latter by exhausting the budget on
+	// thinking) synthesized by the agent loop after Render already
+	// returned, never itself passed through this renderer.
+	wroteAny bool
+}
+
+// WroteAny reports whether the most recent Render call wrote any text to
+// Out.
+func (p *PlainRenderer) WroteAny() bool {
+	return p.wroteAny
 }
 
 // Render implements Renderer. It reconstructs Message.Blocks the same way
@@ -24,13 +42,13 @@ type PlainRenderer struct {
 // arrives rather than only after the fact. ThinkingDelta text is folded
 // into the reconstructed Message the same way, but never written to Out:
 // no thinking text ever reaches piped stdout (16.3).
-func (p PlainRenderer) Render(ctx context.Context, events <-chan llm.Event) (*llm.Response, error) {
+func (p *PlainRenderer) Render(ctx context.Context, events <-chan llm.Event) (*llm.Response, error) {
+	p.wroteAny = false
 	var blocks []llm.Block
 	var thinking strings.Builder
 	var text strings.Builder
 	thinkingOpen := false
 	textOpen := false
-	wroteAny := false
 	names := map[string]string{}
 
 	flushThinking := func() {
@@ -67,7 +85,7 @@ func (p PlainRenderer) Render(ctx context.Context, events <-chan llm.Event) (*ll
 				if _, err := fmt.Fprint(p.Out, v.Text); err != nil {
 					return nil, fmt.Errorf("ui: write output: %w", err)
 				}
-				wroteAny = true
+				p.wroteAny = true
 			case llm.ToolUseStart:
 				flushThinking()
 				flushText()
@@ -79,7 +97,7 @@ func (p PlainRenderer) Render(ctx context.Context, events <-chan llm.Event) (*ll
 			case llm.MessageDone:
 				flushThinking()
 				flushText()
-				if wroteAny {
+				if p.wroteAny {
 					if _, err := fmt.Fprintln(p.Out); err != nil {
 						return nil, fmt.Errorf("ui: write output: %w", err)
 					}
@@ -99,12 +117,12 @@ func (p PlainRenderer) Render(ctx context.Context, events <-chan llm.Event) (*ll
 }
 
 // ToolStarted implements ToolStatusReporter.
-func (p PlainRenderer) ToolStarted(_, name string, _ json.RawMessage) {
+func (p *PlainRenderer) ToolStarted(_, name string, _ json.RawMessage) {
 	_, _ = fmt.Fprintf(p.Out, "→ %s\n", name)
 }
 
 // ToolFinished implements ToolStatusReporter.
-func (p PlainRenderer) ToolFinished(_, name, _ string, isError bool) {
+func (p *PlainRenderer) ToolFinished(_, name, _ string, isError bool) {
 	if isError {
 		_, _ = fmt.Fprintf(p.Out, "✗ %s\n", name)
 		return
@@ -113,6 +131,6 @@ func (p PlainRenderer) ToolFinished(_, name, _ string, isError bool) {
 }
 
 var (
-	_ Renderer           = PlainRenderer{}
-	_ ToolStatusReporter = PlainRenderer{}
+	_ Renderer           = (*PlainRenderer)(nil)
+	_ ToolStatusReporter = (*PlainRenderer)(nil)
 )

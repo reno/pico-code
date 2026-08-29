@@ -32,7 +32,7 @@ func TestPlainRendererWritesTextAsItStreamsWithNoANSI(t *testing.T) {
 	)
 
 	var buf bytes.Buffer
-	resp, err := (PlainRenderer{Out: &buf}).Render(context.Background(), ch)
+	resp, err := (&PlainRenderer{Out: &buf}).Render(context.Background(), ch)
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
@@ -67,7 +67,7 @@ func TestPlainRendererStaysSilentOnThinkingDelta(t *testing.T) {
 	)
 
 	var buf bytes.Buffer
-	resp, err := (PlainRenderer{Out: &buf}).Render(context.Background(), ch)
+	resp, err := (&PlainRenderer{Out: &buf}).Render(context.Background(), ch)
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
@@ -94,7 +94,7 @@ func TestPlainRendererReconstructsToolUseBlock(t *testing.T) {
 	)
 
 	var buf bytes.Buffer
-	resp, err := (PlainRenderer{Out: &buf}).Render(context.Background(), ch)
+	resp, err := (&PlainRenderer{Out: &buf}).Render(context.Background(), ch)
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestPlainRendererPropagatesErrorEvent(t *testing.T) {
 	ch := make(chan llm.Event)
 	go send(ch, llm.Error{Err: wantErr})
 
-	_, err := (PlainRenderer{Out: &bytes.Buffer{}}).Render(context.Background(), ch)
+	_, err := (&PlainRenderer{Out: &bytes.Buffer{}}).Render(context.Background(), ch)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Render() error = %v, want it to wrap %v", err, wantErr)
 	}
@@ -126,7 +126,7 @@ func TestPlainRendererErrorsIfChannelClosesWithoutMessageDone(t *testing.T) {
 	ch := make(chan llm.Event)
 	go send(ch, llm.TextDelta{Text: "hi"})
 
-	_, err := (PlainRenderer{Out: &bytes.Buffer{}}).Render(context.Background(), ch)
+	_, err := (&PlainRenderer{Out: &bytes.Buffer{}}).Render(context.Background(), ch)
 	if err == nil {
 		t.Fatal("Render() error = nil, want an error for a stream closed without MessageDone")
 	}
@@ -138,7 +138,7 @@ func TestPlainRendererRespectsCancellation(t *testing.T) {
 	time.AfterFunc(10*time.Millisecond, cancel)
 
 	start := time.Now()
-	_, err := (PlainRenderer{Out: &bytes.Buffer{}}).Render(ctx, ch)
+	_, err := (&PlainRenderer{Out: &bytes.Buffer{}}).Render(ctx, ch)
 	elapsed := time.Since(start)
 
 	if !errors.Is(err, context.Canceled) {
@@ -146,6 +146,37 @@ func TestPlainRendererRespectsCancellation(t *testing.T) {
 	}
 	if elapsed > time.Second {
 		t.Fatalf("Render() took %s after cancellation, want a prompt return", elapsed)
+	}
+}
+
+// TestPlainRendererWroteAnyTracksEachRenderCallIndependently is a
+// regression test for cmd/pico's streaming fallback print: a caller needs
+// to know, after each Render call, whether that specific round actually
+// streamed any text — a guard-trip or empty-reply explanation (16.1's
+// --think can trigger the latter) is synthesized by the agent loop after
+// Render already returned, so it never flows through TextDelta at all.
+// WroteAny must reset per call, not latch true forever after one round
+// that did stream text.
+func TestPlainRendererWroteAnyTracksEachRenderCallIndependently(t *testing.T) {
+	var buf bytes.Buffer
+	r := &PlainRenderer{Out: &buf}
+
+	ch1 := make(chan llm.Event)
+	go send(ch1, llm.TextDelta{Text: "hi"}, llm.MessageDone{StopReason: "end_turn"})
+	if _, err := r.Render(context.Background(), ch1); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !r.WroteAny() {
+		t.Error("WroteAny() = false after a round with a TextDelta, want true")
+	}
+
+	ch2 := make(chan llm.Event)
+	go send(ch2, llm.MessageDone{StopReason: "length"})
+	if _, err := r.Render(context.Background(), ch2); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if r.WroteAny() {
+		t.Error("WroteAny() = true after a round with no TextDelta at all, want false")
 	}
 }
 

@@ -241,6 +241,40 @@ func TestRunReturnsTextImmediatelyWhenNoToolCall(t *testing.T) {
 	}
 }
 
+// TestRunExplainsAnEmptyReplyInsteadOfReturningSilently is a regression
+// test: a provider can end a turn (often stop_reason "length" — its own
+// token budget ran out, e.g. spent on a Thinking block, 16.1) with no
+// ToolUse and no Text block at all. Before this fix, Run returned "" with
+// no error, so the turn finalized with nothing shown anywhere —
+// indistinguishable from a hang. It must explain itself instead, the same
+// way a guard trip already does.
+func TestRunExplainsAnEmptyReplyInsteadOfReturningSilently(t *testing.T) {
+	provider := &scriptedProvider{responses: []*llm.Response{
+		{
+			Message:    llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.Thinking{Text: "still thinking..."}}},
+			StopReason: "length",
+		},
+	}}
+
+	h := history.New()
+	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{}, 0, AutoApprove)
+
+	got, err := a.Run(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got == "" {
+		t.Fatal("Run() = \"\", want a non-empty explanation")
+	}
+	if !strings.Contains(got, "length") {
+		t.Errorf("Run() = %q, want it to mention the stop reason %q", got, "length")
+	}
+	if err := h.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	assertFinalMessageIsExplanation(t, h)
+}
+
 func TestRunTurnsUnknownToolIntoErrorResult(t *testing.T) {
 	provider := &scriptedProvider{responses: []*llm.Response{
 		{
@@ -896,7 +930,7 @@ func TestRunStreamDrivesScriptedConversationWithToolCall(t *testing.T) {
 	a := New(provider, reg, h, "you are a test agent", 1024, Guards{}, 0, AutoApprove)
 
 	var buf bytes.Buffer
-	renderer := &statusRecordingRenderer{Renderer: ui.PlainRenderer{Out: &buf}}
+	renderer := &statusRecordingRenderer{Renderer: &ui.PlainRenderer{Out: &buf}}
 	got, err := a.RunStream(context.Background(), "please help", renderer)
 	if err != nil {
 		t.Fatalf("RunStream() error = %v", err)
@@ -964,7 +998,7 @@ func TestRunStreamStopsAtMaxTurnsGuard(t *testing.T) {
 	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{MaxTurns: 2}, 0, AutoApprove)
 
 	var buf bytes.Buffer
-	got, err := a.RunStream(context.Background(), "hi", ui.PlainRenderer{Out: &buf})
+	got, err := a.RunStream(context.Background(), "hi", &ui.PlainRenderer{Out: &buf})
 	if err != nil {
 		t.Fatalf("RunStream() error = %v", err)
 	}
