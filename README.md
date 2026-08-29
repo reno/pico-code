@@ -58,14 +58,17 @@ silently truncates context if its `num_ctx` option is left unset — pico
 code always sets it explicitly (`--num-ctx`, default 4096) and logs the
 effective value at startup.
 
-Not every local model supports native tool calling. pico code probes
-`/api/show` once per process and fails fast with a message pointing at
-`--tools=prompted` if the model doesn't advertise tool support.
+Not every local model supports native tool calling, and some that advertise
+support still narrate a tool call in prose instead of using it. So
+`--provider=ollama` defaults `--tools` to `prompted` unless you pass
+`--tools` explicitly; pass `--tools=native` yourself if your model handles
+it reliably. (`--provider=anthropic` keeps defaulting to `native`.)
 `--tools=prompted` injects tool schemas into the system prompt and parses a
 fenced JSON block back out of the reply instead of relying on the model's
 native tool-calling — it can't stream, so it also forces `--stream=false`
 for that turn (a log line says so), and it isn't available at all under
-`--tui`, which always streams.
+`--tui`, which always streams; combine `--tui` with `--provider=ollama` and
+you'll need to add `--tools=native` explicitly.
 
 ## Flags
 
@@ -77,7 +80,7 @@ for that turn (a log line says so), and it isn't available at all under
 | `--token-budget`  | `100000`     | cumulative tokens before it stops on its own                   |
 | `--workspace`     | `.`          | root directory filesystem tools are confined to                |
 | `--yes`           | `false`      | skip interactive approval prompts                              |
-| `--tools`         | `native`     | `native` or `prompted`; prompted mode ignores `--tui` and forces non-streaming |
+| `--tools`         | `native` (`prompted` for `--provider=ollama`) | `native` or `prompted`; prompted mode ignores `--tui` and forces non-streaming |
 | `--stream`        | `true`       | stream a reply as it arrives, plain mode only (the TUI always streams) |
 | `--tui`           | `false`      | bubbletea TUI instead of the plain read-eval-print loop         |
 | `--log-level`     | `info`       | `debug`, `info`, `warn`, or `error`                            |

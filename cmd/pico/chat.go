@@ -42,6 +42,12 @@ const (
 // PICO_CODE_PROVIDER environment fallback, which wins over the built-in
 // default; ANTHROPIC_API_KEY and OLLAMA_HOST are read directly by
 // config.Load since they are credentials, not flags.
+//
+// --tools has its own provider-dependent default: local models frequently
+// advertise native tool support without reliably using it (CLAUDE.md's
+// "narrate a tool call in prose instead of calling it"), so an explicit
+// --provider=ollama with no explicit --tools defaults to prompted rather
+// than native. An explicit --tools always wins.
 func newChatCmd(getenv func(string) string) *cobra.Command {
 	var flags struct {
 		provider      string
@@ -72,6 +78,11 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 				}
 			}
 
+			toolsMode := flags.tools
+			if !cmd.Flags().Changed("tools") && provider == string(config.ProviderOllama) {
+				toolsMode = string(config.ToolsPrompted)
+			}
+
 			cfg, err := config.Load(config.Flags{
 				Provider:      provider,
 				Model:         flags.model,
@@ -79,7 +90,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 				TokenBudget:   flags.tokenBudget,
 				Workspace:     flags.workspace,
 				Yes:           flags.yes,
-				Tools:         flags.tools,
+				Tools:         toolsMode,
 				Stream:        flags.stream,
 				TUI:           flags.tui,
 				LogLevel:      flags.logLevel,
@@ -104,7 +115,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 	f.IntVar(&flags.tokenBudget, "token-budget", 100_000, "maximum cumulative tokens before stopping")
 	f.StringVar(&flags.workspace, "workspace", ".", "root directory filesystem tools are confined to")
 	f.BoolVar(&flags.yes, "yes", false, "skip interactive approval prompts")
-	f.StringVar(&flags.tools, "tools", "native", "tool-calling mode (native|prompted)")
+	f.StringVar(&flags.tools, "tools", "native", "tool-calling mode (native|prompted); defaults to prompted when --provider=ollama and --tools isn't set explicitly")
 	f.BoolVar(&flags.stream, "stream", true, "stream provider responses")
 	f.BoolVar(&flags.tui, "tui", false, "use the bubbletea TUI instead of plain output")
 	f.StringVar(&flags.logLevel, "log-level", "info", "log level (debug|info|warn|error)")

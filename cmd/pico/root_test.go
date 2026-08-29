@@ -88,6 +88,51 @@ func TestChatFlagOverridesEnv(t *testing.T) {
 	}
 }
 
+func TestChatToolsDefaultsToPromptedForOllama(t *testing.T) {
+	getCfg := stubRunChat(t)
+	root := newRootCmd(func(string) string { return "" })
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetArgs([]string{"chat", "--provider=ollama"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("chat returned error: %v", err)
+	}
+	if got := getCfg().Tools; got != config.ToolsPrompted {
+		t.Errorf("Tools = %q, want --provider=ollama with no explicit --tools to default to %q", got, config.ToolsPrompted)
+	}
+}
+
+func TestChatToolsDefaultsToNativeForAnthropic(t *testing.T) {
+	getCfg := stubRunChat(t)
+	root := newRootCmd(func(string) string { return "" })
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetArgs([]string{"chat", "--provider=anthropic"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("chat returned error: %v", err)
+	}
+	if got := getCfg().Tools; got != config.ToolsNative {
+		t.Errorf("Tools = %q, want --provider=anthropic to keep defaulting to %q", got, config.ToolsNative)
+	}
+}
+
+func TestChatExplicitToolsOverridesOllamaDefault(t *testing.T) {
+	getCfg := stubRunChat(t)
+	root := newRootCmd(func(string) string { return "" })
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetArgs([]string{"chat", "--provider=ollama", "--tools=native"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("chat returned error: %v", err)
+	}
+	if got := getCfg().Tools; got != config.ToolsNative {
+		t.Errorf("Tools = %q, want an explicit --tools=native to override the ollama default", got)
+	}
+}
+
 func TestChatUnknownProviderIsClearError(t *testing.T) {
 	root := newRootCmd(func(string) string { return "" })
 	buf := &bytes.Buffer{}
