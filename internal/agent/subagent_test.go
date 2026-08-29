@@ -4,12 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/reno/pico-code/internal/history"
 	"github.com/reno/pico-code/internal/llm"
 	"github.com/reno/pico-code/internal/tools"
+	"github.com/reno/pico-code/internal/ui"
 )
 
 func subAgentToolUse(t *testing.T, id, task string) llm.ToolUse {
@@ -245,5 +250,96 @@ func TestSubAgentToolCancellationPropagatesToNestedAgent(t *testing.T) {
 	}
 	if !tr.IsError {
 		t.Error("ToolResult.IsError = false, want true for a cancelled sub-agent")
+	}
+}
+
+// recordingRenderer implements ui.Renderer, ui.ToolStatusReporter, and
+// ui.SubToolStatusReporter, recording every call in order — 14.2's
+// "sub-agent output" wiring recipient, standing in for the TUI.
+type recordingRenderer struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (r *recordingRenderer) Render(ctx context.Context, ch <-chan llm.Event) (*llm.Response, error) {
+	return llm.CollectStream(ctx, ch)
+}
+
+func (r *recordingRenderer) ToolStarted(id, name string, _ json.RawMessage) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, fmt.Sprintf("start:%s:%s", id, name))
+}
+
+func (r *recordingRenderer) ToolFinished(id, name, _ string, isError bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, fmt.Sprintf("finish:%s:%s:%v", id, name, isError))
+}
+
+func (r *recordingRenderer) SubToolStarted(parentID, id, name string, _ json.RawMessage) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, fmt.Sprintf("substart:%s:%s:%s", parentID, id, name))
+}
+
+func (r *recordingRenderer) SubToolFinished(parentID, id, name string, _ string, isError bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, fmt.Sprintf("subfinish:%s:%s:%s:%v", parentID, id, name, isError))
+}
+
+var (
+	_ ui.Renderer              = (*recordingRenderer)(nil)
+	_ ui.ToolStatusReporter    = (*recordingRenderer)(nil)
+	_ ui.SubToolStatusReporter = (*recordingRenderer)(nil)
+)
+
+// TestSubAgentToolReportsNestedStatusToOuterReporterViaRunStream is 14.2's
+// AC's other half: driven through RunStream (the TUI's path), a sub-agent's
+// own tool call is reported to the outer renderer as nested under the
+// sub_agent call, in the order a UI needs to render it live — started,
+// then its child started/finished, then its own finished.
+func TestSubAgentToolReportsNestedStatusToOuterReporterViaRunStream(t *testing.T) {
+	provider := &scriptedProvider{responses: []*llm.Response{
+		subAgentCall(t, "call_1", "do something"),
+		toolCallResponseNamed("child_call_1", "echo_tool"),
+		textResponse("child done"),
+		textResponse("all done"),
+	}}
+
+	h := history.New()
+	parentReg := tools.NewRegistry()
+	a := New(provider, parentReg, h, "", 1024, Guards{}, 0, AutoApprove)
+
+	sa, err := NewSubAgentTool(provider, []tools.Tool{echoTool{}}, "", 1024, 0, a)
+	if err != nil {
+		t.Fatalf("NewSubAgentTool() error = %v", err)
+	}
+	if err := parentReg.Register(sa); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	renderer := &recordingRenderer{}
+	got, err := a.RunStream(context.Background(), "please delegate", renderer)
+	if err != nil {
+		t.Fatalf("RunStream() error = %v", err)
+	}
+	if got != "all done" {
+		t.Errorf("RunStream() = %q, want %q", got, "all done")
+	}
+
+	renderer.mu.Lock()
+	events := append([]string(nil), renderer.events...)
+	renderer.mu.Unlock()
+
+	want := []string{
+		"start:call_1:sub_agent",
+		"substart:call_1:child_call_1:echo_tool",
+		"subfinish:call_1:child_call_1:echo_tool:false",
+		"finish:call_1:sub_agent:false",
+	}
+	if diff := cmp.Diff(want, events); diff != "" {
+		t.Errorf("recorded events (-want +got):\n%s", diff)
 	}
 }

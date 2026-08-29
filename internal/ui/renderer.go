@@ -28,3 +28,13 @@ type ToolStatusReporter interface {
 	ToolStarted(id, name string, input json.RawMessage)
 	ToolFinished(id, name, output string, isError bool)
 }
+
+// SubToolStatusReporter is an optional ToolStatusReporter capability for a
+// tool call made by a nested loop (a sub-agent) rather than the top-level
+// agent loop. parentID names the top-level ToolUse — the sub_agent call —
+// it nests under, so a renderer can group it under that call instead of
+// interleaving it into the flat transcript the way a top-level call is.
+type SubToolStatusReporter interface {
+	SubToolStarted(parentID, id, name string, input json.RawMessage)
+	SubToolFinished(parentID, id, name, output string, isError bool)
+}

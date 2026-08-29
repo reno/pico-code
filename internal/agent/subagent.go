@@ -9,6 +9,73 @@ import (
 	"github.com/reno/pico-code/internal/history"
 	"github.com/reno/pico-code/internal/llm"
 	"github.com/reno/pico-code/internal/tools"
+	"github.com/reno/pico-code/internal/ui"
+)
+
+// subToolReporterKey is the context.Value key runTool uses to hand a
+// sub_agent call its caller's SubToolStatusReporter and the sub_agent
+// ToolUse's own ID (the "parent" a nested tool call should render under).
+// It's a context value rather than a SubAgentTool field or a wider Tool
+// interface because it's genuinely request-scoped — which reporter and
+// which parent ID applies is a property of *this call*, not of the tool —
+// and because tools.Tool.Run's signature is fixed, shared by every tool.
+type subToolReporterKey struct{}
+
+type subToolReporterValue struct {
+	reporter ui.SubToolStatusReporter
+	parentID string
+}
+
+// withSubToolReporter attaches reporter and parentID to ctx for a nested
+// sub_agent call to pick up via subToolReporterFromContext.
+func withSubToolReporter(ctx context.Context, reporter ui.SubToolStatusReporter, parentID string) context.Context {
+	return context.WithValue(ctx, subToolReporterKey{}, subToolReporterValue{reporter: reporter, parentID: parentID})
+}
+
+// subToolReporterFromContext retrieves what withSubToolReporter attached,
+// if anything — absent whenever the top-level call isn't running under a
+// renderer that implements SubToolStatusReporter (the plain, non-TUI path,
+// and every test that doesn't wire one up).
+func subToolReporterFromContext(ctx context.Context) (ui.SubToolStatusReporter, string, bool) {
+	v, ok := ctx.Value(subToolReporterKey{}).(subToolReporterValue)
+	if !ok {
+		return nil, "", false
+	}
+	return v.reporter, v.parentID, true
+}
+
+// subAgentRenderer drives a nested Agent's turn via RunStream without
+// printing or rendering any text itself (Render just reconstructs the
+// Response the same way the non-streaming path would, via
+// llm.CollectStream) while forwarding its own tool-call status to an outer
+// SubToolStatusReporter, tagged with parentID — the sub_agent ToolUse ID —
+// so a UI can nest it instead of interleaving it into the top-level
+// transcript.
+type subAgentRenderer struct {
+	reporter ui.SubToolStatusReporter
+	parentID string
+}
+
+// Render implements ui.Renderer.
+func (subAgentRenderer) Render(ctx context.Context, events <-chan llm.Event) (*llm.Response, error) {
+	return llm.CollectStream(ctx, events)
+}
+
+// ToolStarted implements ui.ToolStatusReporter, forwarding as a nested
+// call under r.parentID.
+func (r subAgentRenderer) ToolStarted(id, name string, input json.RawMessage) {
+	r.reporter.SubToolStarted(r.parentID, id, name, input)
+}
+
+// ToolFinished implements ui.ToolStatusReporter, forwarding as a nested
+// call under r.parentID.
+func (r subAgentRenderer) ToolFinished(id, name, output string, isError bool) {
+	r.reporter.SubToolFinished(r.parentID, id, name, output, isError)
+}
+
+var (
+	_ ui.Renderer           = subAgentRenderer{}
+	_ ui.ToolStatusReporter = subAgentRenderer{}
 )
 
 // subAgentMaxTurns bounds a sub-agent's own turn count, independent of the
@@ -93,6 +160,13 @@ func (t *SubAgentTool) Schema() json.RawMessage { return t.schema }
 // produced a final answer) comes back as an error here rather than as a
 // normal result, so the parent records ToolResult{IsError:true} instead of
 // silently accepting a cut-off answer as if it were complete.
+//
+// When ctx carries a SubToolStatusReporter (runTool attaches one whenever
+// the top-level renderer is the TUI — see withSubToolReporter), the nested
+// Agent runs via RunStream with a renderer that reports its own tool calls
+// nested under this call instead of interleaving them into the top-level
+// transcript (14.2). Otherwise — the plain renderer, or any test that
+// doesn't wire one up — it runs via the plain Run, unchanged from 14.1.
 func (t *SubAgentTool) Run(ctx context.Context, input json.RawMessage) (string, error) {
 	var in SubAgentInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -100,7 +174,14 @@ func (t *SubAgentTool) Run(ctx context.Context, input json.RawMessage) (string, 
 	}
 
 	child := New(t.provider, t.registry, history.New(), t.system, t.maxTokens, t.childGuards(), t.toolTimeout, AutoApprove)
-	text, err := child.Run(ctx, in.Task)
+
+	var text string
+	var err error
+	if reporter, parentID, ok := subToolReporterFromContext(ctx); ok {
+		text, err = child.RunStream(ctx, in.Task, subAgentRenderer{reporter: reporter, parentID: parentID})
+	} else {
+		text, err = child.Run(ctx, in.Task)
+	}
 	if err != nil {
 		return "", fmt.Errorf("agent: sub_agent: %w", err)
 	}

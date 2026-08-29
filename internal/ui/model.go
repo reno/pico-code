@@ -66,10 +66,14 @@ const (
 )
 
 // toolBlock is one tool call's rendered status within the current turn.
+// children holds tool calls a sub-agent made while answering this block's
+// own call (only ever populated on a sub_agent block) — rendered nested and
+// indented under it rather than interleaved into the flat top-level list.
 type toolBlock struct {
 	id, name string
 	status   string // "running", "ok", "error"
 	output   string
+	children []toolBlock
 }
 
 type approvalRequest struct {
@@ -230,6 +234,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !m.anyToolRunning() {
 			m.state = stateStreaming
+		}
+		m.refreshViewport()
+		return m, nil
+	case subToolStartedMsg:
+		for i := range m.liveTools {
+			if m.liveTools[i].id == msg.parentID {
+				m.liveTools[i].children = append(m.liveTools[i].children, toolBlock{id: msg.id, name: msg.name, status: "running"})
+				break
+			}
+		}
+		m.refreshViewport()
+		return m, nil
+	case subToolFinishedMsg:
+		for i := range m.liveTools {
+			if m.liveTools[i].id != msg.parentID {
+				continue
+			}
+			for j := range m.liveTools[i].children {
+				if m.liveTools[i].children[j].id == msg.id {
+					m.liveTools[i].children[j].status = "ok"
+					if msg.isError {
+						m.liveTools[i].children[j].status = "error"
+					}
+					m.liveTools[i].children[j].output = msg.output
+				}
+			}
+			break
 		}
 		m.refreshViewport()
 		return m, nil
@@ -405,6 +436,27 @@ func padLines(s string, w int) string {
 	return strings.Join(lines, "\n")
 }
 
+// writeToolBlock renders tb's status line, indented two spaces per nesting
+// depth, then recurses into its children — a sub-agent's own tool calls,
+// which never appear at depth 0 — so they read as nested under the call
+// that spawned them instead of interleaved into the flat top-level list.
+func writeToolBlock(b *strings.Builder, tb toolBlock, depth int) {
+	dot := dotPendingStyle.Render("●")
+	icon := "⏳"
+	switch tb.status {
+	case "ok":
+		dot = dotSuccessStyle.Render("●")
+		icon = "✓"
+	case "error":
+		dot = dotErrorStyle.Render("●")
+		icon = "✗"
+	}
+	fmt.Fprintf(b, "%s%s %s %s\n", strings.Repeat("  ", depth), dot, icon, tb.name)
+	for _, child := range tb.children {
+		writeToolBlock(b, child, depth+1)
+	}
+}
+
 // refreshViewport rebuilds the viewport's content from the finalized
 // transcript plus whatever the in-progress turn has produced so far.
 func (m *Model) refreshViewport() {
@@ -416,17 +468,7 @@ func (m *Model) refreshViewport() {
 		b.WriteString("\n")
 	}
 	for _, tb := range m.liveTools {
-		dot := dotPendingStyle.Render("●")
-		icon := "⏳"
-		switch tb.status {
-		case "ok":
-			dot = dotSuccessStyle.Render("●")
-			icon = "✓"
-		case "error":
-			dot = dotErrorStyle.Render("●")
-			icon = "✗"
-		}
-		fmt.Fprintf(&b, "%s %s %s\n", dot, icon, tb.name)
+		writeToolBlock(&b, tb, 0)
 	}
 	if m.err != nil {
 		fmt.Fprintf(&b, "\nerror: %v\n", m.err)

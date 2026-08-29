@@ -26,6 +26,14 @@ type (
 		id, name, output string
 		isError          bool
 	}
+	subToolStartedMsg struct {
+		parentID, id, name string
+		input              json.RawMessage
+	}
+	subToolFinishedMsg struct {
+		parentID, id, name, output string
+		isError                    bool
+	}
 	turnDoneMsg struct {
 		text string
 		err  error
@@ -112,9 +120,20 @@ func (r *TUIRenderer) ToolFinished(id, name, output string, isError bool) {
 	r.Program.Send(toolFinishedMsg{id: id, name: name, output: output, isError: isError})
 }
 
+// SubToolStarted implements SubToolStatusReporter.
+func (r *TUIRenderer) SubToolStarted(parentID, id, name string, input json.RawMessage) {
+	r.Program.Send(subToolStartedMsg{parentID: parentID, id: id, name: name, input: input})
+}
+
+// SubToolFinished implements SubToolStatusReporter.
+func (r *TUIRenderer) SubToolFinished(parentID, id, name, output string, isError bool) {
+	r.Program.Send(subToolFinishedMsg{parentID: parentID, id: id, name: name, output: output, isError: isError})
+}
+
 var (
-	_ Renderer           = (*TUIRenderer)(nil)
-	_ ToolStatusReporter = (*TUIRenderer)(nil)
+	_ Renderer              = (*TUIRenderer)(nil)
+	_ ToolStatusReporter    = (*TUIRenderer)(nil)
+	_ SubToolStatusReporter = (*TUIRenderer)(nil)
 )
 
 // TUIApprover implements the agent.Approver contract (matched structurally

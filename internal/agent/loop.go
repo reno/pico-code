@@ -259,6 +259,9 @@ func (a *Agent) runTool(ctx context.Context, call llm.ToolUse, reporter ui.ToolS
 	if reporter != nil {
 		reporter.ToolStarted(call.ID, call.Name, call.Input)
 	}
+	if sub, ok := reporter.(ui.SubToolStatusReporter); ok {
+		ctx = withSubToolReporter(ctx, sub, call.ID)
+	}
 	result := a.doRunTool(ctx, call)
 	if reporter != nil {
 		tr := result.(llm.ToolResult)

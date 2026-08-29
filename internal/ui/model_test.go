@@ -133,6 +133,105 @@ func TestModelToolRunningPersistsUntilLastParallelToolFinishes(t *testing.T) {
 	}
 }
 
+// TestModelNestsSubToolStatusUnderItsParentBlock is 14.2's AC: a sub-agent's
+// own tool calls go through the running -> ok/error transition independently
+// of, and nested under, the sub_agent call that spawned them.
+func TestModelNestsSubToolStatusUnderItsParentBlock(t *testing.T) {
+	m := newTestModel()
+	m = update(m, turnStartedMsg{cancel: func() {}})
+	m = update(m, toolStartedMsg{id: "call_1", name: "sub_agent"})
+
+	m = update(m, subToolStartedMsg{parentID: "call_1", id: "sub_1", name: "read_file"})
+	if len(m.liveTools) != 1 || len(m.liveTools[0].children) != 1 {
+		t.Fatalf("liveTools = %+v, want one block with one child", m.liveTools)
+	}
+	child := m.liveTools[0].children[0]
+	if child.id != "sub_1" || child.name != "read_file" || child.status != "running" {
+		t.Fatalf("child = %+v, want {id:sub_1 name:read_file status:running}", child)
+	}
+	if m.liveTools[0].status != "running" {
+		t.Errorf("parent status = %q, want it unaffected by its child starting", m.liveTools[0].status)
+	}
+
+	m = update(m, subToolFinishedMsg{parentID: "call_1", id: "sub_1", name: "read_file", output: "contents", isError: false})
+	child = m.liveTools[0].children[0]
+	if child.status != "ok" || child.output != "contents" {
+		t.Fatalf("child = %+v, want status ok with output %q", child, "contents")
+	}
+	if m.liveTools[0].status != "running" {
+		t.Errorf("parent status = %q, want it still running — only its own toolFinishedMsg should change that", m.liveTools[0].status)
+	}
+
+	m = update(m, toolFinishedMsg{id: "call_1", name: "sub_agent", output: "done", isError: false})
+	if m.liveTools[0].status != "ok" {
+		t.Errorf("parent status = %q, want ok once its own toolFinishedMsg arrives", m.liveTools[0].status)
+	}
+}
+
+// TestModelTwoConcurrentSubAgentsRenderAsIndependentBlocksWithNoInterleaving
+// is 14.2's AC: two sub-agents running at once, with their own tool events
+// arriving interleaved (as concurrent goroutines would produce), still end
+// up bucketed under their own parent block, never each other's — both in
+// state and in the rendered transcript.
+func TestModelTwoConcurrentSubAgentsRenderAsIndependentBlocksWithNoInterleaving(t *testing.T) {
+	m := newTestModel()
+	m = update(m, turnStartedMsg{cancel: func() {}})
+	m = update(m, toolStartedMsg{id: "call_a", name: "sub_agent"})
+	m = update(m, toolStartedMsg{id: "call_b", name: "sub_agent"})
+
+	// Interleaved on purpose: A starts, B starts, B finishes, A finishes —
+	// not the tidy start/finish/start/finish order a single sub-agent
+	// would produce.
+	m = update(m, subToolStartedMsg{parentID: "call_a", id: "a_1", name: "read_file"})
+	m = update(m, subToolStartedMsg{parentID: "call_b", id: "b_1", name: "list_dir"})
+	m = update(m, subToolFinishedMsg{parentID: "call_b", id: "b_1", name: "list_dir", output: "b-output", isError: false})
+	m = update(m, subToolFinishedMsg{parentID: "call_a", id: "a_1", name: "read_file", output: "a-output", isError: false})
+
+	if len(m.liveTools) != 2 {
+		t.Fatalf("liveTools has %d blocks, want 2", len(m.liveTools))
+	}
+	blockA, blockB := m.liveTools[0], m.liveTools[1]
+	if len(blockA.children) != 1 || blockA.children[0].id != "a_1" || blockA.children[0].output != "a-output" {
+		t.Fatalf("call_a's children = %+v, want exactly its own child a_1", blockA.children)
+	}
+	if len(blockB.children) != 1 || blockB.children[0].id != "b_1" || blockB.children[0].output != "b-output" {
+		t.Fatalf("call_b's children = %+v, want exactly its own child b_1", blockB.children)
+	}
+
+	// The rendered transcript should read as two top-level "sub_agent"
+	// lines, each immediately followed by its own indented child — never a
+	// child under the other parent's line, and never a child name twice.
+	m.refreshViewport()
+	lines := strings.Split(m.viewport.View(), "\n")
+	var sawSubAgent int
+	var wantChildNext string
+	for _, line := range lines {
+		trimmed := strings.TrimLeft(line, " ")
+		indented := trimmed != line
+		if !indented && strings.Contains(trimmed, "sub_agent") {
+			sawSubAgent++
+			if wantChildNext != "" {
+				t.Fatalf("a new top-level sub_agent block started before %q, its predecessor's child, was seen", wantChildNext)
+			}
+			if sawSubAgent == 1 {
+				wantChildNext = "read_file"
+			} else {
+				wantChildNext = "list_dir"
+			}
+			continue
+		}
+		if indented && wantChildNext != "" {
+			if !strings.Contains(trimmed, wantChildNext) {
+				t.Fatalf("line %q immediately follows a sub_agent block, want it to contain %q", line, wantChildNext)
+			}
+			wantChildNext = ""
+		}
+	}
+	if sawSubAgent != 2 {
+		t.Fatalf("rendered transcript has %d top-level sub_agent lines, want 2", sawSubAgent)
+	}
+}
+
 func TestModelApprovalRequestSuspendsAndRestoresPriorState(t *testing.T) {
 	m := newTestModel()
 	m = update(m, turnStartedMsg{cancel: func() {}})
