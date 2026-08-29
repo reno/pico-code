@@ -49,19 +49,44 @@ func (a *Agent) maybeCompact(ctx context.Context) {
 		return
 	}
 
-	boundary := history.CompactionBoundary(messages, p.KeepTurns)
+	if err := a.compactNow(ctx, messages, p.KeepTurns); err != nil {
+		slog.Warn("agent: skipping compaction", "error", err)
+	}
+}
+
+// ForceCompact runs the same summarization pass as maybeCompact, but
+// unconditionally rather than waiting for the trigger threshold — for the
+// /compact command (CLAUDE.md phase 11.2). It reports the estimated token
+// count before and after so the caller can show the delta. If there are
+// KeepTurns or fewer turns to summarize (including when no policy has been
+// configured), it is a no-op and before == after.
+func (a *Agent) ForceCompact(ctx context.Context) (before, after int, err error) {
+	messages := a.history.Snapshot()
+	before = history.EstimateTokens(messages)
+
+	if err := a.compactNow(ctx, messages, a.compaction.KeepTurns); err != nil {
+		return before, before, err
+	}
+	return before, history.EstimateTokens(a.history.Snapshot()), nil
+}
+
+// compactNow summarizes everything before the boundary that keeps the last
+// keepTurns turns verbatim, then commits it via history.Compact. A no-op if
+// there are keepTurns or fewer turns.
+func (a *Agent) compactNow(ctx context.Context, messages []llm.Message, keepTurns int) error {
+	if keepTurns <= 0 {
+		return nil
+	}
+	boundary := history.CompactionBoundary(messages, keepTurns)
 	if boundary <= 0 {
-		return
+		return nil
 	}
 
 	summary, err := a.summarize(ctx, messages[:boundary])
 	if err != nil {
-		slog.Warn("agent: skipping compaction, summarization call failed", "error", err)
-		return
+		return fmt.Errorf("agent: summarize: %w", err)
 	}
-	if err := a.history.Compact(p.KeepTurns, summary); err != nil {
-		slog.Warn("agent: skipping compaction", "error", err)
-	}
+	return a.history.Compact(keepTurns, summary)
 }
 
 func (a *Agent) summarize(ctx context.Context, elided []llm.Message) (string, error) {

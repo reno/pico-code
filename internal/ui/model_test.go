@@ -425,3 +425,24 @@ func TestModelCommandOutputAppendsToTranscriptWithoutChangingState(t *testing.T)
 		t.Errorf("completed = %q, want it to contain the command output", m.completed)
 	}
 }
+
+// TestModelClearScrollbackWipesTranscriptWithoutChangingState is 11.2's AC
+// for /clear in the TUI: it resets the rendered transcript and nothing else
+// (the agent's history lives outside Model entirely, so there's nothing
+// here that could touch it).
+func TestModelClearScrollbackWipesTranscriptWithoutChangingState(t *testing.T) {
+	m := newTestModel()
+	m = update(m, commandOutputMsg{text: "> /usage\ncumulative: 5 input, 2 output token(s)\n"})
+	if !strings.Contains(m.completed, "cumulative") {
+		t.Fatalf("completed = %q, want the earlier command output present before clearing", m.completed)
+	}
+
+	m = update(m, clearScrollbackMsg{})
+
+	if m.completed != "" {
+		t.Errorf("completed = %q after clearScrollbackMsg, want empty", m.completed)
+	}
+	if m.state != stateIdle {
+		t.Errorf("state after clearScrollbackMsg = %v, want it to stay stateIdle", m.state)
+	}
+}

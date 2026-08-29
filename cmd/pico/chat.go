@@ -420,7 +420,13 @@ func runREPL(ctx context.Context, in io.Reader, out io.Writer, ag *agent.Agent, 
 			continue
 		}
 		if name, arg, ok := slashCommand(line); ok {
-			if _, err := handleCommand(out, ag, h, sess, name, arg); err != nil {
+			_, err := handleCommand(ctx, out, ag, h, sess, name, arg)
+			switch {
+			case errors.Is(err, errExit):
+				return nil
+			case errors.Is(err, errClearScrollback):
+				clearScreen(out)
+			case err != nil:
 				return err
 			}
 			prompt()
@@ -438,6 +444,15 @@ func runREPL(ctx context.Context, in io.Reader, out io.Writer, ag *agent.Agent, 
 		prompt()
 	}
 	return scanner.Err()
+}
+
+// clearScreen writes an ANSI sequence that clears the visible screen and
+// the terminal's scrollback buffer and homes the cursor, for the /clear
+// command in the interactive plain REPL. runREPL only reaches this from an
+// interactive terminal (never the piped, single-shot path in runPlainChat),
+// so 7.1's ANSI-free AC for piped output is unaffected.
+func clearScreen(out io.Writer) {
+	_, _ = fmt.Fprint(out, "\x1b[H\x1b[2J\x1b[3J")
 }
 
 // isInteractive reports whether in is a terminal. A non-*os.File reader
@@ -478,7 +493,15 @@ func runTUIChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, r
 	go func() {
 		for input := range submit {
 			if name, arg, ok := slashCommand(input); ok {
-				ui.CommandOutput(program, runTUICommand(ag, h, sess, input, name, arg))
+				output, cmdErr := runTUICommand(ctx, ag, h, sess, input, name, arg)
+				if errors.Is(cmdErr, errClearScrollback) {
+					ui.ClearScrollback(program)
+				} else {
+					ui.CommandOutput(program, output)
+				}
+				if errors.Is(cmdErr, errExit) {
+					program.Quit()
+				}
 				continue
 			}
 
@@ -502,13 +525,14 @@ func runTUIChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, r
 // TUI's transcript, prefixed with the command line itself (the plain
 // REPL's prompt naturally shows what was typed; the TUI doesn't echo user
 // input into its transcript at all, so a command needs to say what it is).
-// Split out from runTUIChat's driver goroutine so it's testable without a
-// running *tea.Program.
-func runTUICommand(ag *agent.Agent, h *history.History, sess *session, input, name, arg string) string {
+// The returned error is never a write failure (bytes.Buffer.Write can't
+// fail) — it's only ever nil or one of handleCommand's sentinels, which the
+// caller uses to clear the transcript or quit the program instead of
+// appending the output. Split out from runTUIChat's driver goroutine so
+// it's testable without a running *tea.Program.
+func runTUICommand(ctx context.Context, ag *agent.Agent, h *history.History, sess *session, input, name, arg string) (string, error) {
 	var buf bytes.Buffer
 	_, _ = fmt.Fprintf(&buf, "> %s\n", input)
-	// bytes.Buffer.Write never errors, so handleCommand's error return
-	// (only ever a write failure) is unreachable here.
-	_, _ = handleCommand(&buf, ag, h, sess, name, arg)
-	return buf.String()
+	_, err := handleCommand(ctx, &buf, ag, h, sess, name, arg)
+	return buf.String(), err
 }

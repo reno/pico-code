@@ -327,7 +327,7 @@ func TestRunTUICommandUsage(t *testing.T) {
 		t.Fatalf("runTurn() error = %v", err)
 	}
 
-	out := runTUICommand(ag, h, noSession(t), "/usage", "usage", "")
+	out, _ := runTUICommand(context.Background(), ag, h, noSession(t), "/usage", "usage", "")
 
 	if !strings.Contains(out, "> /usage") {
 		t.Errorf("output = %q, want it to echo the command line", out)
@@ -350,12 +350,12 @@ func TestRunTUICommandNewSaveLoad(t *testing.T) {
 	provider := &fakeChatProvider{reply: "reply"}
 	ag := agent.New(provider, tools.NewRegistry(), h, "", 1024, agent.Guards{}, 0, agent.AutoApprove)
 
-	saveOut := runTUICommand(ag, h, sess, "/save first", "save", "first")
+	saveOut, _ := runTUICommand(context.Background(), ag, h, sess, "/save first", "save", "first")
 	if !strings.Contains(saveOut, `saved session "first"`) {
 		t.Errorf("save output = %q, want a save confirmation", saveOut)
 	}
 
-	newOut := runTUICommand(ag, h, sess, "/new", "new", "")
+	newOut, _ := runTUICommand(context.Background(), ag, h, sess, "/new", "new", "")
 	if !strings.Contains(newOut, "started a new, unsaved session") {
 		t.Errorf("new output = %q, want a /new confirmation", newOut)
 	}
@@ -363,7 +363,7 @@ func TestRunTUICommandNewSaveLoad(t *testing.T) {
 		t.Errorf("history has %d messages after /new, want 0", len(h.Snapshot()))
 	}
 
-	loadOut := runTUICommand(ag, h, sess, "/load first", "load", "first")
+	loadOut, _ := runTUICommand(context.Background(), ag, h, sess, "/load first", "load", "first")
 	if !strings.Contains(loadOut, `loaded session "first"`) {
 		t.Errorf("load output = %q, want a load confirmation", loadOut)
 	}

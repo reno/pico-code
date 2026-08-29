@@ -149,6 +149,60 @@ func TestMaybeCompactSkippedWhenSummarizationFails(t *testing.T) {
 	}
 }
 
+// TestForceCompactRunsRegardlessOfThreshold is 11.2's AC: /compact forces
+// the compaction pass immediately (no ContextWindow/TriggerFraction
+// configured at all, unlike maybeCompact) and reports the estimated token
+// count before and after.
+func TestForceCompactRunsRegardlessOfThreshold(t *testing.T) {
+	h := history.New()
+	for i := 0; i < 10; i++ {
+		h.Append(llm.Message{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: "a fairly long question to pad out the estimated token count here"}}})
+		h.Append(llm.Message{Role: llm.RoleAssistant, Blocks: []llm.Block{llm.Text{Text: "a fairly long answer to pad out the estimated token count here too"}}})
+	}
+	before := history.EstimateTokens(h.Snapshot())
+
+	provider := &scriptedProvider{responses: []*llm.Response{textResponse("everything before this was summarized")}}
+	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{}, 0, AutoApprove)
+	a.SetCompactionPolicy(CompactionPolicy{KeepTurns: 2})
+
+	gotBefore, gotAfter, err := a.ForceCompact(context.Background())
+	if err != nil {
+		t.Fatalf("ForceCompact() error = %v", err)
+	}
+	if gotBefore != before {
+		t.Errorf("ForceCompact() before = %d, want %d (matching EstimateTokens on the untouched history)", gotBefore, before)
+	}
+	if gotAfter >= gotBefore {
+		t.Errorf("ForceCompact() after = %d, want less than before (%d)", gotAfter, gotBefore)
+	}
+	if err := h.Validate(); err != nil {
+		t.Fatalf("Validate() after ForceCompact() error = %v", err)
+	}
+}
+
+// TestForceCompactNoopWithoutEnoughTurns covers KeepTurns unset (the zero
+// value CompactionPolicy) and KeepTurns exceeding the number of turns
+// present — both must be no-ops that never call the provider.
+func TestForceCompactNoopWithoutEnoughTurns(t *testing.T) {
+	h := history.New()
+	h.Append(llm.Message{Role: llm.RoleUser, Blocks: []llm.Block{llm.Text{Text: "hi"}}})
+	before := h.Snapshot()
+
+	provider := &alwaysErrorsProvider{err: errors.New("must not be called")}
+	a := New(provider, tools.NewRegistry(), h, "", 1024, Guards{}, 0, AutoApprove)
+
+	gotBefore, gotAfter, err := a.ForceCompact(context.Background())
+	if err != nil {
+		t.Fatalf("ForceCompact() error = %v, want nil for a no-op", err)
+	}
+	if gotBefore != gotAfter {
+		t.Errorf("ForceCompact() = (%d, %d), want before == after for a no-op", gotBefore, gotAfter)
+	}
+	if diff := cmpMessage(h.Snapshot()[0], before[0]); diff != "" {
+		t.Errorf("history changed by a no-op ForceCompact(): %s", diff)
+	}
+}
+
 func cmpMessage(a, b llm.Message) string {
 	if a.Role != b.Role {
 		return fmt.Sprintf("Role: got %q, want %q", a.Role, b.Role)

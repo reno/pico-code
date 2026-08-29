@@ -35,6 +35,7 @@ type (
 	// flight, so it stops on its own once the turn ends.
 	turnTickMsg        struct{}
 	commandOutputMsg   struct{ text string }
+	clearScrollbackMsg struct{}
 	approvalRequestMsg struct {
 		toolName string
 		input    json.RawMessage
@@ -157,4 +158,11 @@ func TurnDone(program *tea.Program, text string, err error) {
 // without ever sending TurnStarted for it.
 func CommandOutput(program *tea.Program, text string) {
 	program.Send(commandOutputMsg{text: text})
+}
+
+// ClearScrollback wipes the transcript /clear renders to (never the agent's
+// history — that lives in internal/history, untouched here), for the
+// /clear command in the TUI.
+func ClearScrollback(program *tea.Program) {
+	program.Send(clearScrollbackMsg{})
 }

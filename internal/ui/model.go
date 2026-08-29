@@ -185,6 +185,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.completed += msg.text
 		m.refreshViewport()
 		return m, nil
+	case clearScrollbackMsg:
+		m.completed = ""
+		m.refreshViewport()
+		return m, nil
 	case approvalRequestMsg:
 		m.approvalQueue = append(m.approvalQueue, approvalRequest{toolName: msg.toolName, preview: msg.preview, resp: msg.resp})
 		if m.approval == nil {
