@@ -28,10 +28,11 @@ curl -fsSL https://raw.githubusercontent.com/reno/pico-code/main/install.sh \
   | BIN_NAME=pico-code INSTALL_DIR=~/.local/bin sh
 ```
 
-Or via Homebrew (macOS/Linux):
+Or via Homebrew (macOS/Linux), which installs the command as `pico-code` so it
+never shadows an existing `pico`:
 
 ```bash
-brew install reno/tap/pico
+brew install reno/tap/pico-code
 ```
 
 Or with Go 1.26+ already installed:
