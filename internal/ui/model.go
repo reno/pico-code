@@ -16,11 +16,20 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// userLineStyle marks a submitted message in the transcript and the input
-// textbox itself as the user's own text: a gray field with white text, so a
-// submitted turn reads as visually distinct from the assistant's reply that
-// follows it.
+// userLineStyle marks a submitted message in the transcript as the user's
+// own text: a gray field with white text, so a submitted turn reads as
+// visually distinct from the assistant's reply that follows it.
 var userLineStyle = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("15"))
+
+// inputBoxStyle colors the input textarea's own text (prompt, typed
+// characters, cursor line): a near-black field, distinct from
+// userLineStyle's grayer transcript highlight.
+var inputBoxStyle = lipgloss.NewStyle().Background(lipgloss.Color("232")).Foreground(lipgloss.Color("15"))
+
+// inputPlaceholderStyle colors the "Ask pico code…" hint shown before any
+// text is typed: the same near-black field as inputBoxStyle, but gray text
+// so it reads as a hint rather than content.
+var inputPlaceholderStyle = lipgloss.NewStyle().Background(lipgloss.Color("232")).Foreground(lipgloss.Color("245"))
 
 // statusLineStyle colors the turn status line (spinner + word + counters)
 // shown while a turn is in flight.
@@ -144,16 +153,16 @@ func NewModel(submit chan<- string, info BannerInfo, glamourStyle string) Model 
 	ta.Focus()
 	ta.ShowLineNumbers = false
 	ta.SetHeight(3)
-	ta.FocusedStyle.Prompt = userLineStyle
-	ta.FocusedStyle.Text = userLineStyle
-	ta.FocusedStyle.CursorLine = userLineStyle
-	ta.FocusedStyle.EndOfBuffer = userLineStyle
-	ta.FocusedStyle.Placeholder = userLineStyle
-	ta.BlurredStyle.Prompt = userLineStyle
-	ta.BlurredStyle.Text = userLineStyle
-	ta.BlurredStyle.CursorLine = userLineStyle
-	ta.BlurredStyle.EndOfBuffer = userLineStyle
-	ta.BlurredStyle.Placeholder = userLineStyle
+	ta.FocusedStyle.Prompt = inputBoxStyle
+	ta.FocusedStyle.Text = inputBoxStyle
+	ta.FocusedStyle.CursorLine = inputBoxStyle
+	ta.FocusedStyle.EndOfBuffer = inputBoxStyle
+	ta.FocusedStyle.Placeholder = inputPlaceholderStyle
+	ta.BlurredStyle.Prompt = inputBoxStyle
+	ta.BlurredStyle.Text = inputBoxStyle
+	ta.BlurredStyle.CursorLine = inputBoxStyle
+	ta.BlurredStyle.EndOfBuffer = inputBoxStyle
+	ta.BlurredStyle.Placeholder = inputPlaceholderStyle
 
 	sp := spinner.New()
 	sp.Spinner = rotatingSpinner
@@ -535,12 +544,12 @@ func (m Model) View() string {
 }
 
 // padTextareaView tops up every line of the textarea's rendered view with
-// gray-background spaces out to width w. In placeholder mode, the
+// near-black-background spaces out to width w. In placeholder mode, the
 // component's own inner viewport already pads short lines out to its
 // declared width, but with plain, unstyled spaces — the tail of the
-// placeholder line reads as a bare gap instead of gray. Any literal
-// trailing spaces are stripped and rebuilt with userLineStyle so the whole
-// line, not just its text, carries the background.
+// placeholder line reads as a bare gap instead of matching the box. Any
+// literal trailing spaces are stripped and rebuilt with inputBoxStyle so
+// the whole line, not just its text, carries the background.
 func padTextareaView(view string, w int) string {
 	if w <= 0 {
 		return view
@@ -553,7 +562,7 @@ func padTextareaView(view string, w int) string {
 			spaces = gap
 		}
 		if spaces > 0 {
-			lines[i] = trimmed + userLineStyle.Render(strings.Repeat(" ", spaces))
+			lines[i] = trimmed + inputBoxStyle.Render(strings.Repeat(" ", spaces))
 		}
 	}
 	return strings.Join(lines, "\n")
