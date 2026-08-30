@@ -1,0 +1,12 @@
+{
+  "modelfile": "# generated fixture, not a real Modelfile",
+  "details": {
+    "family": "qwen3",
+    "parameter_size": "8.0B",
+    "quantization_level": "Q4_K_M"
+  },
+  "model_info": {
+    "general.architecture": "qwen3"
+  },
+  "capabilities": ["completion", "tools"]
+}

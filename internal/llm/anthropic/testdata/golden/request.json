@@ -1,0 +1,78 @@
+{
+  "max_tokens": 1024,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "What's the weather in Paris?",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "Let me check.",
+          "type": "text"
+        },
+        {
+          "id": "toolu_01ABC",
+          "input": {
+            "location": "Paris"
+          },
+          "name": "get_weather",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "cache_control": {
+            "type": "ephemeral"
+          },
+          "content": [
+            {
+              "text": "15C, cloudy",
+              "type": "text"
+            }
+          ],
+          "is_error": false,
+          "tool_use_id": "toolu_01ABC",
+          "type": "tool_result"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-test-model",
+  "system": [
+    {
+      "cache_control": {
+        "type": "ephemeral"
+      },
+      "text": "You are a helpful weather assistant.",
+      "type": "text"
+    }
+  ],
+  "tools": [
+    {
+      "description": "Get the current weather for a location.",
+      "input_schema": {
+        "properties": {
+          "location": {
+            "description": "City name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "location"
+        ],
+        "type": "object"
+      },
+      "name": "get_weather"
+    }
+  ]
+}

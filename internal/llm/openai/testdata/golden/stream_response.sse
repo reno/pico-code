@@ -1,0 +1,18 @@
+data: {"id":"chatcmpl-golden","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-golden","choices":[{"index":0,"delta":{"content":"Let me check the weather."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-golden","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_golden","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-golden","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"location\":\"Pa"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-golden","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ris\","}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-golden","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"unit\":\"celsius\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-golden","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl-golden","choices":[],"usage":{"prompt_tokens":42,"completion_tokens":17}}
+
+data: [DONE]
+

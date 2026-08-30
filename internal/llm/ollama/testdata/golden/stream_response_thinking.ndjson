@@ -1,0 +1,4 @@
+{"model":"qwen3:8b","created_at":"2024-01-01T00:00:00Z","message":{"role":"assistant","content":"","thinking":"7 times "},"done":false}
+{"model":"qwen3:8b","created_at":"2024-01-01T00:00:00Z","message":{"role":"assistant","content":"","thinking":"8 is 56."},"done":false}
+{"model":"qwen3:8b","created_at":"2024-01-01T00:00:00Z","message":{"role":"assistant","content":"56","thinking":""},"done":false}
+{"model":"qwen3:8b","created_at":"2024-01-01T00:00:00Z","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":20,"eval_count":12}

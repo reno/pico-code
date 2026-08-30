@@ -1,0 +1,7 @@
+Summarize the earlier part of this conversation between you (the assistant) and a user, so the summary can replace the original messages in your context. Preserve any facts, decisions, file paths, commands, or conclusions that later turns might depend on. Do not include pleasantries or filler. Write the summary as plain prose, not a transcript.
+
+Conversation to summarize:
+user: read config.go and tell me the default port
+assistant: [called tool read_file with {"path":"config.go"}]
+user: [tool result (ok): const defaultPort = 8080]
+assistant: The default port is 8080.
