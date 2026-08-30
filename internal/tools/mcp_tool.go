@@ -62,6 +62,13 @@ func MCPToolName(server, remoteName string) string {
 // Description implements Tool.
 func (t *MCPTool) Description() string { return t.description }
 
+// NeedsApproval implements tools.ApprovalRequired: a remote server's tool
+// can have side effects at least as unbounded as run_command or write_file
+// — network calls, shell execution, filesystem access on its own machine —
+// but none of the sandboxing this process applies to its own built-ins, so
+// every call goes through the same approval gate.
+func (t *MCPTool) NeedsApproval() bool { return true }
+
 // Schema implements Tool. The server's JSON Schema is passed through
 // untouched: unlike an LLM provider adapter narrowing a schema to its own
 // SDK shape, this client has no basis for reshaping an externally
@@ -107,4 +114,7 @@ func flattenContent(blocks []mcp.ContentBlock) string {
 	return strings.Join(parts, "\n")
 }
 
-var _ Tool = (*MCPTool)(nil)
+var (
+	_ Tool             = (*MCPTool)(nil)
+	_ ApprovalRequired = (*MCPTool)(nil)
+)

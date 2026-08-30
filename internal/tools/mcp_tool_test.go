@@ -43,6 +43,17 @@ func TestMCPToolNameIsNamespaced(t *testing.T) {
 	}
 }
 
+// TestMCPToolNeedsApproval proves an MCP tool is gated the same way as
+// run_command and write_file: a remote server's side effects are at least
+// as unbounded as those built-ins, so the loop must never run one
+// unattended.
+func TestMCPToolNeedsApproval(t *testing.T) {
+	tool := NewMCPTool(&fakeCaller{}, "weather-server", testToolInfo())
+	if !tool.NeedsApproval() {
+		t.Error("NeedsApproval() = false, want true for every MCP tool call")
+	}
+}
+
 func TestMCPToolDescriptionAndSchemaPassThrough(t *testing.T) {
 	info := testToolInfo()
 	tool := NewMCPTool(&fakeCaller{}, "weather-server", info)
