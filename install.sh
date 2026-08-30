@@ -63,6 +63,8 @@ curl -fsSL "$base_url/checksums.txt" -o "$tmp_dir/checksums.txt"
 
 tar -xzf "$tmp_dir/$archive" -C "$tmp_dir" pico
 
+existing_pico=$(command -v pico 2>/dev/null || true)
+
 install_dir=${INSTALL_DIR:-/usr/local/bin}
 if [ ! -w "$install_dir" ] 2>/dev/null; then
 	install_dir="$HOME/.local/bin"
@@ -71,6 +73,10 @@ fi
 
 install -m 755 "$tmp_dir/pico" "$install_dir/pico"
 echo "Installed $("$install_dir/pico" --version) to $install_dir/pico"
+
+if [ -n "$existing_pico" ] && [ "$existing_pico" != "$install_dir/pico" ]; then
+	echo "note: another 'pico' was already on your PATH at $existing_pico (often nano's Pine-compatibility alias) — $install_dir/pico takes priority only if $install_dir comes first in PATH"
+fi
 
 case ":$PATH:" in
 	*":$install_dir:"*) ;;
