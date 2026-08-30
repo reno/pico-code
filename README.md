@@ -5,9 +5,31 @@ A small CLI AI agent written in Go. One agent loop, two LLM backends —
 (local) — and a handful of sandboxed tools (read a file, list a directory, run
 an allowlisted command, write a file behind a flag).
 
-## Quickstart
+## Install
 
-Requires Go 1.26+.
+```bash
+curl -fsSL https://raw.githubusercontent.com/reno/pico-code/main/install.sh | sh
+```
+
+Downloads the right prebuilt binary for your OS/arch (Linux or macOS, amd64
+or arm64) from the [latest release](https://github.com/reno/pico-code/releases)
+into `/usr/local/bin` (or `~/.local/bin` if that isn't writable) — no Go
+required. Windows isn't supported yet: command timeouts rely on POSIX
+process groups.
+
+Or via Homebrew (macOS/Linux):
+
+```bash
+brew install reno/tap/pico
+```
+
+Or with Go 1.26+ already installed:
+
+```bash
+go install github.com/reno/pico-code/cmd/pico@latest
+```
+
+Building from source:
 
 ```bash
 git clone https://github.com/reno/pico-code.git
@@ -19,10 +41,10 @@ Pick a backend and talk to it:
 
 ```bash
 # Local, no account needed — see "Ollama" below for the one-time setup.
-./bin/pico --provider=ollama --model=qwen3:8b
+pico --provider=ollama --model=qwen3:8b
 
 # Cloud — needs ANTHROPIC_API_KEY set first.
-./bin/pico --provider=anthropic --model=claude-sonnet-4-5
+pico --provider=anthropic --model=claude-sonnet-4-5
 ```
 
 Either command drops you into a `> ` prompt. Ctrl+D (EOF) exits cleanly;
@@ -220,6 +242,14 @@ make test    # go test ./... — offline, no network, no API keys
 make lint    # gofmt -l . && go vet ./... && golangci-lint run
 make run     # go run ./cmd/pico --provider=ollama
 ```
+
+Releases are cut by pushing a `vX.Y.Z` tag; `.github/workflows/release.yml`
+runs [GoReleaser](https://goreleaser.com/) to build binaries for
+linux/darwin × amd64/arm64, publish a GitHub release with `install.sh`-
+compatible archives, and push an updated cask to the `reno/homebrew-tap`
+repo (needs a `HOMEBREW_TAP_GITHUB_TOKEN` secret with write access to that
+repo). Validate the config locally with `goreleaser check` or
+`goreleaser release --snapshot --clean`.
 
 `make test` never touches the network. Provider adapters replay recorded
 HTTP exchanges from `testdata/golden/` through an `httptest.Server`; running

@@ -1,0 +1,57 @@
+version: 2
+
+project_name: pico
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: pico
+    main: ./cmd/pico
+    binary: pico
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/reno/pico-code/internal/version.Version={{ .Version }}
+
+archives:
+  - id: pico
+    name_template: "pico_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: reno
+    name: pico-code
+
+homebrew_casks:
+  - name: pico
+    repository:
+      owner: reno
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/reno/pico-code"
+    description: "A small CLI AI agent written in Go"
+    license: MIT

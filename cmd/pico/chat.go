@@ -26,11 +26,8 @@ import (
 	"github.com/reno/pico-code/internal/llm/prompted"
 	"github.com/reno/pico-code/internal/tools"
 	"github.com/reno/pico-code/internal/ui"
+	"github.com/reno/pico-code/internal/version"
 )
-
-// version is stamped into the home screen's frame title. Bumped by hand;
-// there is no release pipeline to derive it from yet.
-const version = "v0.1.0"
 
 const (
 	systemPrompt       = "You are pico, a terminal coding agent. Be direct and concise."
@@ -379,7 +376,7 @@ func runPlainChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider,
 // filesystem, or look at the environment.
 func bannerInfo(cfg *config.Config, sess *session) ui.BannerInfo {
 	info := ui.BannerInfo{
-		Version:  version,
+		Version:  version.Version,
 		Greeting: ui.Mockery(),
 		Provider: string(cfg.Provider),
 		Model:    cfg.Model,
