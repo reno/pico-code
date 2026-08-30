@@ -1,6 +1,6 @@
 # TUI manual check
 
-Run `./bin/pico chat --tui --provider=ollama --model=<model>` (or
+Run `./bin/pico --tui --provider=ollama --model=<model>` (or
 `--provider=anthropic`) against a live backend and walk this list. Tick each
 box only after actually observing the behavior — this is 7.2's AC, and it is
 explicitly manual: nothing here is exercised by `make test`.

@@ -19,10 +19,10 @@ Pick a backend and talk to it:
 
 ```bash
 # Local, no account needed — see "Ollama" below for the one-time setup.
-./bin/pico chat --provider=ollama --model=qwen3:8b
+./bin/pico --provider=ollama --model=qwen3:8b
 
 # Cloud — needs ANTHROPIC_API_KEY set first.
-./bin/pico chat --provider=anthropic --model=claude-sonnet-4-5
+./bin/pico --provider=anthropic --model=claude-sonnet-4-5
 ```
 
 Either command drops you into a `> ` prompt. Ctrl+D (EOF) exits cleanly;
@@ -36,7 +36,7 @@ a second if the first doesn't. `--tui` behaves differently on purpose: see
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-./bin/pico chat --provider=anthropic --model=<a Claude model ID>
+./bin/pico --provider=anthropic --model=<a Claude model ID>
 ```
 
 Nothing else to install. Retries on 429/5xx happen inside the SDK; a bad key
@@ -83,7 +83,7 @@ savings will be smaller than this in practice.
 # and pull a model
 ollama pull qwen3:8b
 
-./bin/pico chat --provider=ollama --model=qwen3:8b
+./bin/pico --provider=ollama --model=qwen3:8b
 ```
 
 `OLLAMA_HOST` overrides the default `http://localhost:11434`. Ollama
@@ -218,7 +218,7 @@ compacted history is always in a state the model can resume from cleanly.
 make build   # bin/pico
 make test    # go test ./... — offline, no network, no API keys
 make lint    # gofmt -l . && go vet ./... && golangci-lint run
-make run     # go run ./cmd/pico chat --provider=ollama
+make run     # go run ./cmd/pico --provider=ollama
 ```
 
 `make test` never touches the network. Provider adapters replay recorded
