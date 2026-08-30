@@ -60,7 +60,7 @@ func TestChatProviderEnvFallback(t *testing.T) {
 	root := newRootCmd(getenv)
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
-	root.SetArgs(nil)
+	root.SetArgs([]string{"--model=test-model"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("chat returned error: %v", err)
@@ -78,7 +78,7 @@ func TestChatFlagOverridesEnv(t *testing.T) {
 	root := newRootCmd(getenv)
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
-	root.SetArgs([]string{"--provider=anthropic"})
+	root.SetArgs([]string{"--provider=anthropic", "--model=test-model"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("chat returned error: %v", err)
@@ -93,7 +93,7 @@ func TestChatToolsDefaultsToPromptedForOllama(t *testing.T) {
 	root := newRootCmd(func(string) string { return "" })
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
-	root.SetArgs([]string{"--provider=ollama"})
+	root.SetArgs([]string{"--provider=ollama", "--model=test-model"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("chat returned error: %v", err)
@@ -108,7 +108,7 @@ func TestChatToolsDefaultsToNativeForAnthropic(t *testing.T) {
 	root := newRootCmd(func(string) string { return "" })
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
-	root.SetArgs([]string{"--provider=anthropic"})
+	root.SetArgs([]string{"--provider=anthropic", "--model=test-model"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("chat returned error: %v", err)
@@ -123,7 +123,7 @@ func TestChatExplicitToolsOverridesOllamaDefault(t *testing.T) {
 	root := newRootCmd(func(string) string { return "" })
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
-	root.SetArgs([]string{"--provider=ollama", "--tools=native"})
+	root.SetArgs([]string{"--provider=ollama", "--tools=native", "--model=test-model"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("chat returned error: %v", err)
@@ -146,5 +146,21 @@ func TestChatUnknownProviderIsClearError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "bogus") {
 		t.Errorf("expected error to name the offending value, got: %v", err)
+	}
+}
+
+func TestChatMissingModelIsClearError(t *testing.T) {
+	root := newRootCmd(func(string) string { return "" })
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs(nil)
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected an error when --model is not passed")
+	}
+	if !strings.Contains(err.Error(), "--model") {
+		t.Errorf("expected error to mention --model, got: %v", err)
 	}
 }

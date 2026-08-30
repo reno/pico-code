@@ -1,9 +1,11 @@
 # pico code
 
-A small CLI AI agent written in Go. One agent loop, two LLM backends —
-[Anthropic](https://docs.anthropic.com/) (cloud) and [Ollama](https://ollama.com/)
-(local) — and a handful of sandboxed tools (read a file, list a directory, run
-an allowlisted command, write a file behind a flag).
+A small CLI AI agent written in Go. One agent loop, three LLM backends —
+[Anthropic](https://docs.anthropic.com/) (cloud), [Ollama](https://ollama.com/)
+(local), and any OpenAI-compatible `/chat/completions` endpoint — plus
+sandboxed filesystem tools (read, list, search, glob always on; write and
+edit behind a flag), an allowlisted `run_command`, and optional MCP servers
+for anything beyond that.
 
 ## Install
 
@@ -16,6 +18,15 @@ or arm64) from the [latest release](https://github.com/reno/pico-code/releases)
 into `/usr/local/bin` (or `~/.local/bin` if that isn't writable) — no Go
 required. Windows isn't supported yet: command timeouts rely on POSIX
 process groups.
+
+Many systems already have a `pico` — usually nano's Pine-compatibility alias
+at `/usr/bin/pico`. Set `BIN_NAME` to install under a different command name
+and keep both, and `INSTALL_DIR` to choose where it lands:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/reno/pico-code/main/install.sh \
+  | BIN_NAME=pico-code INSTALL_DIR=~/.local/bin sh
+```
 
 Or via Homebrew (macOS/Linux):
 
@@ -45,6 +56,9 @@ pico --provider=ollama --model=qwen3:8b
 
 # Cloud — needs ANTHROPIC_API_KEY set first.
 pico --provider=anthropic --model=claude-sonnet-4-5
+
+# Any OpenAI-compatible endpoint (OpenAI itself, vLLM, LM Studio, ...).
+pico --provider=openai --model=gpt-4o
 ```
 
 Either command drops you into a `> ` prompt. Ctrl+D (EOF) exits cleanly;
@@ -52,7 +66,7 @@ Ctrl+C interrupts the process the way it would any CLI tool — one to stop,
 a second if the first doesn't. `--tui` behaves differently on purpose: see
 [While chatting](#while-chatting).
 
-## The two backends
+## The three backends
 
 ### Anthropic
 
@@ -68,34 +82,34 @@ or an unreachable network surfaces as a clear error rather than a hang.
 
 Every request marks two `cache_control` breakpoints: one on the system
 prompt, one on the last block of the last message. Because history only
-ever grows by appending, each new turn's request shares an identical
-prefix with the one before it up to that second breakpoint — the provider
-serves everything up to there from cache and only charges full price for
-the newly appended tail. A `/compact` (or automatic compaction, 8.2)
-rewrites the oldest turns into a fresh synthetic summary, which changes
-the cached prefix's bytes; the next request simply writes a new cache
-entry there instead of ever risking a stale one.
+ever grows by appending, each new turn shares an identical prefix with the
+last one up to that second breakpoint, so the provider serves it from
+cache and only charges full price for the newly appended tail. A
+`/compact` (or automatic compaction, 8.2) rewrites the oldest turns into a
+fresh summary, which simply starts a new cache entry rather than risking a
+stale one.
 
-The savings are real but numbers vary a lot by conversation shape, so
-here's the arithmetic rather than a single "X% faster" claim, using
-`claude-sonnet-4-5`'s published per-token rates ($3.00 input / $3.75 cache
-write / $0.30 cache read, per million tokens — see `internal/config/pricing.go`
-for the same "these are estimates" caveat `/usage` carries). For a 2,000
-token stable prefix (a typical system prompt plus tool definitions) reused
-across 10 requests within the cache's TTL:
+Using `claude-sonnet-4-5`'s published rates ($3.00 input / $3.75 cache
+write / $0.30 cache read per million tokens — see `internal/config/pricing.go`),
+a 2,000-token stable prefix reused across 10 requests costs $0.0600
+without caching vs. $0.0129 with it: a ~78% reduction on the
+*stable-prefix portion* of input cost, improving further the longer the
+conversation runs. It doesn't touch the growing tail of new messages each
+turn adds, which is never cached and always full price.
 
-| | cost |
-|---|---|
-| without caching (10 × full-price reads of the 2,000 tokens) | 10 × 2000 × $3.00 / 1e6 = **$0.0600** |
-| with caching (1 write + 9 reads of the 2,000 tokens) | (2000 × $3.75 / 1e6) + 9 × (2000 × $0.30 / 1e6) = $0.0075 + $0.0054 = **$0.0129** |
+### OpenAI-compatible
 
-That's a ~78% reduction on the *stable-prefix portion* of input cost over
-10 turns, and it keeps improving the longer the conversation runs — the
-one-time write premium amortizes away while every later turn keeps paying
-the ~10×-cheaper read rate. It only covers the part of each request that's
-actually stable; the growing tail (each turn's own new messages) is never
-cached and always costs full price, so a whole conversation's total
-savings will be smaller than this in practice.
+```bash
+export OPENAI_API_KEY=sk-...        # optional — some endpoints need no auth
+export OPENAI_BASE_URL=http://localhost:8000/v1   # optional, default api.openai.com/v1
+./bin/pico --provider=openai --model=<model ID>
+```
+
+One adapter for anything that speaks the same flat `/chat/completions` +
+`tool_calls` shape as OpenAI: OpenAI itself, vLLM, LM Studio, or a local
+Ollama's own `/v1` endpoint. `OPENAI_BASE_URL` is what points it at any of
+those; an unset `OPENAI_API_KEY` is not an error, since many
+OpenAI-compatible servers run with no auth at all.
 
 ### Ollama
 
@@ -117,7 +131,8 @@ Not every local model supports native tool calling, and some that advertise
 support still narrate a tool call in prose instead of using it. So
 `--provider=ollama` defaults `--tools` to `prompted` unless you pass
 `--tools` explicitly; pass `--tools=native` yourself if your model handles
-it reliably. (`--provider=anthropic` keeps defaulting to `native`.)
+it reliably. (`--provider=anthropic` and `--provider=openai` keep
+defaulting to `native`.)
 `--tools=prompted` injects tool schemas into the system prompt and parses a
 fenced JSON block back out of the reply instead of relying on the model's
 native tool-calling — it can't stream, so it also forces `--stream=false`
@@ -129,7 +144,7 @@ you'll need to add `--tools=native` explicitly.
 
 | Flag              | Default      | Meaning                                                      |
 | ----------------- | ------------ | -------------------------------------------------------------- |
-| `--provider`      | `anthropic`  | `anthropic` or `ollama`                                       |
+| `--provider`      | `anthropic`  | `anthropic`, `ollama`, or `openai`                             |
 | `--model`         | (none)       | model ID for the selected provider                            |
 | `--max-turns`     | `25`         | agent loop turns before it stops on its own                   |
 | `--token-budget`  | `100000`     | cumulative tokens before it stops on its own                   |
@@ -139,17 +154,19 @@ you'll need to add `--tools=native` explicitly.
 | `--stream`        | `true`       | stream a reply as it arrives, plain mode only (the TUI always streams) |
 | `--tui`           | `false`      | bubbletea TUI instead of the plain read-eval-print loop         |
 | `--log-level`     | `info`       | `debug`, `info`, `warn`, or `error`                            |
-| `--num-ctx`       | `4096`       | Ollama's context window (`num_ctx`); ignored by Anthropic       |
-| `--allow-write`   | `false`      | register the `write_file` tool                                 |
+| `--num-ctx`       | `4096`       | Ollama's context window (`num_ctx`); ignored by other providers |
+| `--allow-write`   | `false`      | register the `write_file` and `edit_file` tools                |
 | `--session`       | (none)       | name a session to resume or start; saved after every turn       |
 | `--allow-commands`| (none)       | comma-separated binary allowlist; registers `run_command` only if non-empty |
 | `--context-window`| `200000`     | context window compaction measures usage against; ignored by Ollama, which uses `--num-ctx` |
 | `--think`         | `false`      | ask the model for a reasoning trace ahead of its reply; currently Ollama only |
+| `--mcp-config`    | (none)       | path to a JSON file listing MCP servers (`{"mcpServers": {name: {command, args, env}}}`) |
 
 `PICO_CODE_PROVIDER` is an environment fallback for `--provider`, checked
-only when the flag isn't explicitly set. `ANTHROPIC_API_KEY` and
-`OLLAMA_HOST` are read from the environment only — there's no flag for
-either, so a credential never ends up in shell history.
+only when the flag isn't explicitly set. `ANTHROPIC_API_KEY`, `OLLAMA_HOST`,
+`OPENAI_API_KEY`, and `OPENAI_BASE_URL` are read from the environment
+only — there's no flag for any of them, so a credential never ends up in
+shell history.
 
 ## While chatting
 
@@ -161,6 +178,8 @@ Both the plain REPL and the TUI understand the same commands:
 - `/new` — start a fresh, unsaved conversation
 - `/save [name]` — save the current conversation as a session
 - `/load <name>` — replace the current conversation with a saved session
+- `/mcp [reconnect <name>]` — list configured MCP servers and their status,
+  or reconnect one (only meaningful with `--mcp-config` set)
 
 `--session <name>` does the same save/resume automatically, after every
 turn, in both — kill the process mid-conversation and `--session <name>`
@@ -204,11 +223,15 @@ design.
   binary) executes only that allowlisted binary, directly (`exec.Command`,
   never a shell — no `|`, `&&`, `$()`, or similar can do anything), with a
   timeout and truncated output.
-- `write_file` and `run_command` both need approval unless `--yes` is
-  passed; the plain REPL prompts on the terminal, the TUI shows a modal.
+- `write_file`, `edit_file`, `run_command`, and any tool from an MCP server
+  all need approval unless `--yes` is passed; the plain REPL prompts on the
+  terminal, the TUI shows a modal.
 - Tool output is truncated (head + tail, with an elision marker) before it
   ever reaches the model's context, so one large file can't blow the
   context window.
+- A provider or model-resolution failure (an unreachable Ollama daemon, a
+  typo'd `--model`) is rewritten into a one-line message naming the actual
+  problem instead of the raw transport error (`cmd/pico/errors.go`).
 
 ## How the agent loop works
 

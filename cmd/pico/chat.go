@@ -69,43 +69,43 @@ func configureChat(cmd *cobra.Command, getenv func(string) string) {
 	}
 
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-			provider := flags.provider
-			if !cmd.Flags().Changed("provider") {
-				if v := getenv("PICO_CODE_PROVIDER"); v != "" {
-					provider = v
-				}
+		provider := flags.provider
+		if !cmd.Flags().Changed("provider") {
+			if v := getenv("PICO_CODE_PROVIDER"); v != "" {
+				provider = v
 			}
-
-			toolsMode := flags.tools
-			if !cmd.Flags().Changed("tools") && provider == string(config.ProviderOllama) {
-				toolsMode = string(config.ToolsPrompted)
-			}
-
-			cfg, err := config.Load(config.Flags{
-				Provider:      provider,
-				Model:         flags.model,
-				MaxTurns:      flags.maxTurns,
-				TokenBudget:   flags.tokenBudget,
-				Workspace:     flags.workspace,
-				Yes:           flags.yes,
-				Tools:         toolsMode,
-				Stream:        flags.stream,
-				TUI:           flags.tui,
-				LogLevel:      flags.logLevel,
-				NumCtx:        flags.numCtx,
-				AllowWrite:    flags.allowWrite,
-				Session:       flags.session,
-				AllowCommands: flags.allowCommands,
-				ContextWindow: flags.contextWindow,
-				MCPConfig:     flags.mcpConfig,
-				Think:         flags.think,
-			}, getenv)
-			if err != nil {
-				return fmt.Errorf("resolving config: %w", err)
-			}
-
-			return runChat(cmd, cfg)
 		}
+
+		toolsMode := flags.tools
+		if !cmd.Flags().Changed("tools") && provider == string(config.ProviderOllama) {
+			toolsMode = string(config.ToolsPrompted)
+		}
+
+		cfg, err := config.Load(config.Flags{
+			Provider:      provider,
+			Model:         flags.model,
+			MaxTurns:      flags.maxTurns,
+			TokenBudget:   flags.tokenBudget,
+			Workspace:     flags.workspace,
+			Yes:           flags.yes,
+			Tools:         toolsMode,
+			Stream:        flags.stream,
+			TUI:           flags.tui,
+			LogLevel:      flags.logLevel,
+			NumCtx:        flags.numCtx,
+			AllowWrite:    flags.allowWrite,
+			Session:       flags.session,
+			AllowCommands: flags.allowCommands,
+			ContextWindow: flags.contextWindow,
+			MCPConfig:     flags.mcpConfig,
+			Think:         flags.think,
+		}, getenv)
+		if err != nil {
+			return fmt.Errorf("resolving config: %w", err)
+		}
+
+		return runChat(cmd, cfg)
+	}
 
 	f := cmd.Flags()
 	f.StringVar(&flags.provider, "provider", "anthropic", "LLM backend to use (anthropic|ollama|openai)")

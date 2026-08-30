@@ -1,4 +1,6 @@
-.PHONY: build test lint run
+.PHONY: build test lint run run-plain
+
+RUN_FLAGS = --provider=ollama --model=qwen3.5:4b --tools=native --think --num-ctx 8192
 
 build:
 	go build -o bin/pico ./cmd/pico
@@ -11,5 +13,8 @@ lint:
 	go vet ./...
 	golangci-lint run
 
-run:
-	go run ./cmd/pico --provider=ollama --model=qwen3.5:4b --tui --tools=native --think --num-ctx 8192
+run: build
+	./bin/pico $(RUN_FLAGS) --tui
+
+run-plain: build
+	./bin/pico $(RUN_FLAGS)
