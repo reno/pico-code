@@ -12,4 +12,4 @@ lint:
 	golangci-lint run
 
 run:
-	go run ./cmd/pico --provider=ollama --model=qwen2.5-coder:7b --tui
+	go run ./cmd/pico --provider=ollama --model=qwen3.5:4b --tui --tools=native --think --num-ctx 8192
