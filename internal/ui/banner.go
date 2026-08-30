@@ -145,7 +145,7 @@ func greeting(info BannerInfo) string {
 // topBorder draws the frame's top edge with the title inlaid, mirroring
 // the "╭─── name version ───╮" shape.
 func topBorder(version string, inner int, frame lipgloss.Style) string {
-	title := "pico code"
+	title := "pico"
 	if version != "" {
 		title += " " + version
 	}
@@ -154,7 +154,7 @@ func topBorder(version string, inner int, frame lipgloss.Style) string {
 	if fill < 0 {
 		return frame.Render("╭" + strings.Repeat("─", inner) + "╮")
 	}
-	name := lipgloss.NewStyle().Foreground(lipgloss.Color("#ADFF2F")).Bold(true).Render("pico code")
+	name := lipgloss.NewStyle().Foreground(lipgloss.Color("#ADFF2F")).Bold(true).Render("pico")
 	if version != "" {
 		name += lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(" " + version)
 	}

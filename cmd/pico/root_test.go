@@ -33,7 +33,7 @@ func TestChatHelpListsEveryFlag(t *testing.T) {
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetErr(buf)
-	root.SetArgs([]string{"chat", "--help"})
+	root.SetArgs([]string{"--help"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("chat --help returned error: %v", err)
@@ -60,7 +60,7 @@ func TestChatProviderEnvFallback(t *testing.T) {
 	root := newRootCmd(getenv)
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
-	root.SetArgs([]string{"chat"})
+	root.SetArgs(nil)
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("chat returned error: %v", err)
@@ -78,7 +78,7 @@ func TestChatFlagOverridesEnv(t *testing.T) {
 	root := newRootCmd(getenv)
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
-	root.SetArgs([]string{"chat", "--provider=anthropic"})
+	root.SetArgs([]string{"--provider=anthropic"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("chat returned error: %v", err)
@@ -93,7 +93,7 @@ func TestChatToolsDefaultsToPromptedForOllama(t *testing.T) {
 	root := newRootCmd(func(string) string { return "" })
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
-	root.SetArgs([]string{"chat", "--provider=ollama"})
+	root.SetArgs([]string{"--provider=ollama"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("chat returned error: %v", err)
@@ -108,7 +108,7 @@ func TestChatToolsDefaultsToNativeForAnthropic(t *testing.T) {
 	root := newRootCmd(func(string) string { return "" })
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
-	root.SetArgs([]string{"chat", "--provider=anthropic"})
+	root.SetArgs([]string{"--provider=anthropic"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("chat returned error: %v", err)
@@ -123,7 +123,7 @@ func TestChatExplicitToolsOverridesOllamaDefault(t *testing.T) {
 	root := newRootCmd(func(string) string { return "" })
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
-	root.SetArgs([]string{"chat", "--provider=ollama", "--tools=native"})
+	root.SetArgs([]string{"--provider=ollama", "--tools=native"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("chat returned error: %v", err)
@@ -138,7 +138,7 @@ func TestChatUnknownProviderIsClearError(t *testing.T) {
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetErr(buf)
-	root.SetArgs([]string{"chat", "--provider=bogus"})
+	root.SetArgs([]string{"--provider=bogus"})
 
 	err := root.Execute()
 	if err == nil {

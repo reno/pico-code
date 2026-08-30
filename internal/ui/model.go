@@ -143,7 +143,7 @@ type Model struct {
 // bytes onto the screen. An empty glamourStyle defaults to "dark".
 func NewModel(submit chan<- string, info BannerInfo, glamourStyle string) Model {
 	ta := textarea.New()
-	ta.Placeholder = "Ask pico code…"
+	ta.Placeholder = "Ask pico…"
 	ta.SetPromptFunc(2, func(lineIdx int) string {
 		if lineIdx == 0 {
 			return "> "

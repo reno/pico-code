@@ -49,7 +49,7 @@ func TestBannerRowsAreFlush(t *testing.T) {
 func TestBannerShowsSessionDetails(t *testing.T) {
 	out := Banner(sampleInfo(), 120)
 	for _, want := range []string{
-		"pico code v0.1.0", "Welcome back, meatbag!", "ollama", "qwen3:8b",
+		"pico v0.1.0", "Welcome back, meatbag!", "ollama", "qwen3:8b",
 		"renan", "/tmp/ws", "type /help", "refactor-loop", "add-tools", "128k", "█",
 	} {
 		if !strings.Contains(out, want) {

@@ -33,12 +33,14 @@ import (
 const version = "v0.1.0"
 
 const (
-	systemPrompt       = "You are pico code, a terminal coding agent. Be direct and concise."
+	systemPrompt       = "You are pico, a terminal coding agent. Be direct and concise."
 	defaultMaxTokens   = 4096
 	defaultToolTimeout = 2 * time.Minute
 )
 
-// newChatCmd builds the chat subcommand. Flag values win over the
+// configureChat wires chat's flags and RunE directly onto cmd — the root
+// command itself, since starting a chat session is pico's only behavior and
+// doesn't need its own subcommand. Flag values win over the
 // PICO_CODE_PROVIDER environment fallback, which wins over the built-in
 // default; ANTHROPIC_API_KEY and OLLAMA_HOST are read directly by
 // config.Load since they are credentials, not flags.
@@ -48,7 +50,7 @@ const (
 // "narrate a tool call in prose instead of calling it"), so an explicit
 // --provider=ollama with no explicit --tools defaults to prompted rather
 // than native. An explicit --tools always wins.
-func newChatCmd(getenv func(string) string) *cobra.Command {
+func configureChat(cmd *cobra.Command, getenv func(string) string) {
 	var flags struct {
 		provider      string
 		model         string
@@ -69,10 +71,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 		think         bool
 	}
 
-	cmd := &cobra.Command{
-		Use:   "chat",
-		Short: "Start an interactive chat session with the agent",
-		RunE: func(cmd *cobra.Command, _ []string) error {
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 			provider := flags.provider
 			if !cmd.Flags().Changed("provider") {
 				if v := getenv("PICO_CODE_PROVIDER"); v != "" {
@@ -109,8 +108,7 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 			}
 
 			return runChat(cmd, cfg)
-		},
-	}
+		}
 
 	f := cmd.Flags()
 	f.StringVar(&flags.provider, "provider", "anthropic", "LLM backend to use (anthropic|ollama|openai)")
@@ -130,8 +128,6 @@ func newChatCmd(getenv func(string) string) *cobra.Command {
 	f.IntVar(&flags.contextWindow, "context-window", defaultContextWindow, "context window size compaction measures usage against (ignored by Ollama, which uses --num-ctx instead)")
 	f.StringVar(&flags.mcpConfig, "mcp-config", "", `path to a JSON file listing MCP servers, shaped {"mcpServers": {name: {command, args, env}}}`)
 	f.BoolVar(&flags.think, "think", false, "ask the model for a reasoning trace ahead of its reply, when the provider supports one (currently Ollama only)")
-
-	return cmd
 }
 
 // runChat is a package var so tests can substitute a stub instead of
