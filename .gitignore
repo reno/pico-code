@@ -35,3 +35,5 @@ go.work.sum
 # agents
 .claude/
 docs/
+# build output
+bin/
