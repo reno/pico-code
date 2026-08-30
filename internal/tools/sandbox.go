@@ -108,6 +108,14 @@ func (s *Sandbox) contains(p string) bool {
 	return p == s.root || strings.HasPrefix(p, s.root+string(filepath.Separator))
 }
 
+// Denied reports whether resolved — an absolute path already known to lie
+// beneath the sandbox root — matches a deny glob. Exposed for tools like
+// search_files that walk the tree themselves rather than resolving each
+// visited file through Resolve.
+func (s *Sandbox) Denied(resolved string) bool {
+	return s.denied(resolved)
+}
+
 func (s *Sandbox) denied(resolved string) bool {
 	rel, err := filepath.Rel(s.root, resolved)
 	if err != nil {
