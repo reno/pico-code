@@ -62,10 +62,7 @@ func (t *WriteFileTool) Preview(_ context.Context, input json.RawMessage) (strin
 	return lineDiff(string(old), in.Content), nil
 }
 
-// Run writes in.Content to in.Path atomically: it writes to a temp file in
-// the same directory, then renames it over the target, so a reader never
-// observes a partially written file and an interrupted run leaves the
-// original untouched.
+// Run writes in.Content to in.Path atomically (see atomicWriteFile).
 func (t *WriteFileTool) Run(ctx context.Context, input json.RawMessage) (string, error) {
 	var in WriteFileInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -77,30 +74,43 @@ func (t *WriteFileTool) Run(ctx context.Context, input json.RawMessage) (string,
 		return "", err
 	}
 
+	if err := atomicWriteFile(ctx, resolved, in.Content); err != nil {
+		return "", fmt.Errorf("tools: write_file %q: %w", in.Path, err)
+	}
+	return fmt.Sprintf("wrote %d bytes to %s", len(in.Content), in.Path), nil
+}
+
+// atomicWriteFile writes content to resolved (an already sandbox-resolved
+// absolute path) by writing to a temp file in the same directory, then
+// renaming it over the target — so a reader never observes a partially
+// written file and an interrupted run leaves the original untouched.
+// Shared by write_file and edit_file so both commit through the identical
+// mechanism.
+func atomicWriteFile(ctx context.Context, resolved, content string) error {
 	dir := filepath.Dir(resolved)
 	tmp, err := os.CreateTemp(dir, ".pico-write-*")
 	if err != nil {
-		return "", fmt.Errorf("tools: write_file %q: create temp: %w", in.Path, err)
+		return fmt.Errorf("create temp: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath) //nolint:errcheck // no-op once the rename below succeeds
 
-	if _, err := tmp.WriteString(in.Content); err != nil {
+	if _, err := tmp.WriteString(content); err != nil {
 		_ = tmp.Close()
-		return "", fmt.Errorf("tools: write_file %q: %w", in.Path, err)
+		return err
 	}
 	if err := tmp.Close(); err != nil {
-		return "", fmt.Errorf("tools: write_file %q: %w", in.Path, err)
+		return err
 	}
 
 	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("tools: write_file %q: %w", in.Path, err)
+		return err
 	}
 
 	if err := os.Rename(tmpPath, resolved); err != nil {
-		return "", fmt.Errorf("tools: write_file %q: rename: %w", in.Path, err)
+		return fmt.Errorf("rename: %w", err)
 	}
-	return fmt.Sprintf("wrote %d bytes to %s", len(in.Content), in.Path), nil
+	return nil
 }
 
 var (

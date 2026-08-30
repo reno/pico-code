@@ -279,6 +279,13 @@ func buildRegistry(cfg *config.Config) (*tools.Registry, error) {
 		if err := registry.Register(writeTool); err != nil {
 			return nil, err
 		}
+		editTool, err := tools.NewEditFileTool(sandbox)
+		if err != nil {
+			return nil, err
+		}
+		if err := registry.Register(editTool); err != nil {
+			return nil, err
+		}
 	}
 	if len(cfg.AllowCommands) > 0 {
 		runTool, err := tools.NewRunCommandTool(cfg.AllowCommands, defaultToolTimeout)
