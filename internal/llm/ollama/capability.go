@@ -65,7 +65,7 @@ func (p *Provider) probeShow(ctx context.Context, modelName string) (api.ShowRes
 
 	res, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		return api.ShowResponse{}, fmt.Errorf("ollama: %w", err)
+		return api.ShowResponse{}, fmt.Errorf("%w: %w", ErrUnreachable, err)
 	}
 	defer func() { _ = res.Body.Close() }()
 

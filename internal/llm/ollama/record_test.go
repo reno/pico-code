@@ -25,7 +25,7 @@ func TestRecordLiveExchange(t *testing.T) {
 	}
 	host := os.Getenv("OLLAMA_HOST")
 	if host == "" {
-		host = defaultHost
+		host = DefaultHost
 	}
 	model := os.Getenv("PICO_RECORD_OLLAMA_MODEL")
 	if model == "" {

@@ -67,6 +67,39 @@ func TestFriendlyAgentErrorModelNotFound(t *testing.T) {
 	}
 }
 
+// TestFriendlyAgentErrorOllamaUnreachable covers a local Ollama daemon that
+// was never started: p.httpClient.Do fails outright (dial tcp ... connect:
+// connection refused), wrapped through internal/agent's "agent: stream: %w"
+// and ollama's own "checking tool support: %w" before reaching here.
+func TestFriendlyAgentErrorOllamaUnreachable(t *testing.T) {
+	dialErr := errors.New(`Post "http://localhost:11434/api/show": dial tcp [::1]:11434: connect: connection refused`)
+	raw := fmt.Errorf("agent: stream: ollama: checking tool support: %w: %w", ollama.ErrUnreachable, dialErr)
+
+	t.Run("default host", func(t *testing.T) {
+		cfg := &config.Config{Provider: "ollama", Model: "qwen3:8b"}
+		got := friendlyAgentError(cfg, raw)
+
+		if !strings.Contains(got.Error(), ollama.DefaultHost) {
+			t.Errorf("friendlyAgentError() = %q, want it to name %q", got.Error(), ollama.DefaultHost)
+		}
+		if strings.Contains(got.Error(), "dial tcp") {
+			t.Errorf("friendlyAgentError() = %q, want the raw dial error stripped", got.Error())
+		}
+		if !errors.Is(got, ollama.ErrUnreachable) {
+			t.Errorf("friendlyAgentError() = %v, want it to still wrap %v", got, ollama.ErrUnreachable)
+		}
+	})
+
+	t.Run("configured host", func(t *testing.T) {
+		cfg := &config.Config{Provider: "ollama", Model: "qwen3:8b", OllamaHost: "http://gpu-box:11434"}
+		got := friendlyAgentError(cfg, raw)
+
+		if !strings.Contains(got.Error(), "http://gpu-box:11434") {
+			t.Errorf("friendlyAgentError() = %q, want it to name the configured OLLAMA_HOST", got.Error())
+		}
+	})
+}
+
 func TestFriendlyAgentErrorPassesThroughUnrecognized(t *testing.T) {
 	cfg := &config.Config{Provider: "anthropic", Model: "claude"}
 	raw := errors.New("network is down")

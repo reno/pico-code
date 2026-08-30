@@ -21,7 +21,10 @@ func init() {
 	llm.Register(string(config.ProviderOllama), New)
 }
 
-const defaultHost = "http://localhost:11434"
+// DefaultHost is used when neither --provider's config nor OLLAMA_HOST name
+// one, and reused by cmd/pico to name the address it couldn't reach in a
+// friendly ErrUnreachable message.
+const DefaultHost = "http://localhost:11434"
 
 // Provider adapts Ollama's /api/chat to llm.Provider. It speaks HTTP
 // directly with net/http rather than through api.Client: the client's own
@@ -45,7 +48,7 @@ type Provider struct {
 func New(cfg *config.Config) (llm.Provider, error) {
 	host := cfg.OllamaHost
 	if host == "" {
-		host = defaultHost
+		host = DefaultHost
 	}
 	numCtx := cfg.NumCtx
 	if numCtx <= 0 {
@@ -90,7 +93,7 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request) (*llm.Response, er
 
 	res, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("ollama: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrUnreachable, err)
 	}
 	defer func() { _ = res.Body.Close() }()
 

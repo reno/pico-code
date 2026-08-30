@@ -48,7 +48,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 
 	res, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("ollama: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrUnreachable, err)
 	}
 	if res.StatusCode >= http.StatusBadRequest {
 		defer func() { _ = res.Body.Close() }()
