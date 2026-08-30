@@ -191,3 +191,17 @@ func TestPlainRendererToolStatusHasNoANSI(t *testing.T) {
 		t.Errorf("tool status output contains an ANSI escape byte: %q", buf.String())
 	}
 }
+
+// TestPlainRendererToolFinishedShowsErrorMessage guards against the tool
+// failure content (e.g. a schema validation message naming a missing
+// required parameter) being computed for the model's ToolResult but never
+// reaching the human watching a piped or non-TUI session.
+func TestPlainRendererToolFinishedShowsErrorMessage(t *testing.T) {
+	var buf bytes.Buffer
+	r := PlainRenderer{Out: &buf}
+	r.ToolFinished("t1", "read_file", `tools: invalid input for "read_file": input: missing required field "path"`, true)
+
+	if !strings.Contains(buf.String(), `missing required field "path"`) {
+		t.Errorf("ToolFinished(isError=true) output = %q, want it to contain the failure message", buf.String())
+	}
+}

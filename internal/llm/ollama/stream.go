@@ -53,7 +53,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (<-chan llm.Even
 	if res.StatusCode >= http.StatusBadRequest {
 		defer func() { _ = res.Body.Close() }()
 		respBody, _ := io.ReadAll(res.Body)
-		return nil, fmt.Errorf("ollama: request failed with status %d: %s", res.StatusCode, bytes.TrimSpace(respBody))
+		return nil, mapError(res.StatusCode, respBody)
 	}
 
 	return llm.StreamEvents(ctx, func(send func(llm.Event) bool) {

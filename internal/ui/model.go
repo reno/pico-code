@@ -463,7 +463,11 @@ func padLines(s string, w int) string {
 // writeToolBlock renders tb's status line, indented two spaces per nesting
 // depth, then recurses into its children — a sub-agent's own tool calls,
 // which never appear at depth 0 — so they read as nested under the call
-// that spawned them instead of interleaved into the flat top-level list.
+// that spawned them instead of interleaved into the flat top-level list. A
+// failed call also gets its output (the same message the model received as
+// its ToolResult content, e.g. a missing required parameter) printed one
+// level deeper, so the user learns what went wrong instead of just seeing a
+// red ✗ next to the tool name.
 func writeToolBlock(b *strings.Builder, tb toolBlock, depth int) {
 	dot := dotPendingStyle.Render("●")
 	icon := "⏳"
@@ -476,6 +480,12 @@ func writeToolBlock(b *strings.Builder, tb toolBlock, depth int) {
 		icon = "✗"
 	}
 	fmt.Fprintf(b, "%s%s %s %s\n", strings.Repeat("  ", depth), dot, icon, tb.name)
+	if tb.status == "error" && tb.output != "" {
+		indent := strings.Repeat("  ", depth+1)
+		for _, line := range strings.Split(tb.output, "\n") {
+			fmt.Fprintln(b, dotErrorStyle.Render(indent+line))
+		}
+	}
 	for _, child := range tb.children {
 		writeToolBlock(b, child, depth+1)
 	}

@@ -99,7 +99,7 @@ func (p *Provider) Chat(ctx context.Context, req llm.Request) (*llm.Response, er
 		return nil, fmt.Errorf("ollama: read response: %w", err)
 	}
 	if res.StatusCode >= http.StatusBadRequest {
-		return nil, fmt.Errorf("ollama: request failed with status %d: %s", res.StatusCode, bytes.TrimSpace(respBody))
+		return nil, mapError(res.StatusCode, respBody)
 	}
 	recordutil.LogBytes(ctx, "ollama: response", respBody)
 

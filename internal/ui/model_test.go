@@ -186,6 +186,26 @@ func TestModelToolRunningPersistsUntilLastParallelToolFinishes(t *testing.T) {
 	}
 }
 
+// TestModelToolFinishedErrorShowsOutputInViewport is a regression test: a
+// failed tool call must surface the actual error message it received (e.g.
+// a missing required parameter) in the rendered viewport, not just a red
+// status dot next to the tool name.
+func TestModelToolFinishedErrorShowsOutputInViewport(t *testing.T) {
+	m := newTestModel()
+	m = update(m, turnStartedMsg{cancel: func() {}})
+	m = update(m, toolStartedMsg{id: "t1", name: "read_file"})
+	m = update(m, toolFinishedMsg{
+		id:      "t1",
+		name:    "read_file",
+		output:  `boom: missing required field "path"`,
+		isError: true,
+	})
+
+	if !strings.Contains(m.viewport.View(), "missing required field") {
+		t.Errorf("viewport = %q, want it to contain the tool's error output", m.viewport.View())
+	}
+}
+
 // TestModelNestsSubToolStatusUnderItsParentBlock is 14.2's AC: a sub-agent's
 // own tool calls go through the running -> ok/error transition independently
 // of, and nested under, the sub_agent call that spawned them.

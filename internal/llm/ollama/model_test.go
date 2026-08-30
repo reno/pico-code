@@ -3,6 +3,7 @@ package ollama
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,8 +13,8 @@ import (
 
 // TestValidateModelKnownAndUnknown is 11.3's AC: /model with a name the
 // provider does not know errors. A model /api/show has never pulled comes
-// back as a non-2xx status (a real Ollama server returns 404), which
-// ValidateModel surfaces as a plain error.
+// back as a 404, which ValidateModel maps to ErrNotFound so a caller can
+// tell "model doesn't exist" apart from a transport or server failure.
 func TestValidateModelKnownAndUnknown(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -36,8 +37,8 @@ func TestValidateModelKnownAndUnknown(t *testing.T) {
 	if err := p.ValidateModel(context.Background(), "known-model"); err != nil {
 		t.Errorf("ValidateModel(known) error = %v, want nil", err)
 	}
-	if err := p.ValidateModel(context.Background(), "unknown-model"); err == nil {
-		t.Error("ValidateModel(unknown) error = nil, want an error for a model /api/show doesn't recognize")
+	if err := p.ValidateModel(context.Background(), "unknown-model"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ValidateModel(unknown) error = %v, want wrapping %v", err, ErrNotFound)
 	}
 }
 

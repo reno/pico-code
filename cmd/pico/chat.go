@@ -149,7 +149,7 @@ var runChat = func(cmd *cobra.Command, cfg *config.Config) error {
 
 	provider, err := llm.New(cfg)
 	if err != nil {
-		return fmt.Errorf("resolving provider: %w", err)
+		return fmt.Errorf("resolving provider: %w", friendlyAgentError(cfg, err))
 	}
 	provider, err = resolveProvider(cfg, provider)
 	if err != nil {
@@ -438,7 +438,7 @@ func newTurnRunner(cfg *config.Config, ag *agent.Agent, out io.Writer) func(cont
 		return func(ctx context.Context, input string) error {
 			text, err := ag.Run(ctx, input)
 			if err != nil {
-				return err
+				return friendlyAgentError(cfg, err)
 			}
 			_, err = fmt.Fprintln(out, text)
 			return err
@@ -448,7 +448,7 @@ func newTurnRunner(cfg *config.Config, ag *agent.Agent, out io.Writer) func(cont
 	return func(ctx context.Context, input string) error {
 		text, err := ag.RunStream(ctx, input, renderer)
 		if err != nil {
-			return err
+			return friendlyAgentError(cfg, err)
 		}
 		// A guard trip or an empty-reply explanation (16.1's --think can
 		// trigger the latter by exhausting the budget on thinking) is
@@ -574,7 +574,9 @@ func runTUIChat(cmd *cobra.Command, cfg *config.Config, provider llm.Provider, r
 			ui.TurnStarted(program, cancel)
 			text, err := ag.RunStream(turnCtx, input, renderer)
 			cancel()
-			if err == nil {
+			if err != nil {
+				err = friendlyAgentError(cfg, err)
+			} else {
 				err = sess.saveIfActive(h)
 			}
 			ui.TurnDone(program, text, err)

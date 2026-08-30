@@ -121,10 +121,14 @@ func (p *PlainRenderer) ToolStarted(_, name string, _ json.RawMessage) {
 	_, _ = fmt.Fprintf(p.Out, "→ %s\n", name)
 }
 
-// ToolFinished implements ToolStatusReporter.
-func (p *PlainRenderer) ToolFinished(_, name, _ string, isError bool) {
+// ToolFinished implements ToolStatusReporter. On failure it also prints
+// output, the same message the model received as its ToolResult content, so
+// a human watching a piped or non-TUI session learns what actually went
+// wrong (a missing required parameter, an unknown tool name, ...) instead of
+// just seeing a bare ✗.
+func (p *PlainRenderer) ToolFinished(_, name, output string, isError bool) {
 	if isError {
-		_, _ = fmt.Fprintf(p.Out, "✗ %s\n", name)
+		_, _ = fmt.Fprintf(p.Out, "✗ %s: %s\n", name, output)
 		return
 	}
 	_, _ = fmt.Fprintf(p.Out, "✓ %s\n", name)

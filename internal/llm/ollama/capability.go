@@ -50,8 +50,7 @@ func (p *Provider) probeToolSupport(ctx context.Context) (bool, error) {
 // probeShow calls /api/show for modelName, the low-level request both
 // probeToolSupport (for p.model, cached via supportsTools) and
 // ValidateModel (for an arbitrary candidate, uncached) build on. A model
-// /api/show doesn't recognize comes back as a non-2xx status, surfaced here
-// as a plain error.
+// /api/show doesn't recognize comes back as a 404, mapped to ErrNotFound.
 func (p *Provider) probeShow(ctx context.Context, modelName string) (api.ShowResponse, error) {
 	body, err := json.Marshal(api.ShowRequest{Model: modelName})
 	if err != nil {
@@ -75,7 +74,7 @@ func (p *Provider) probeShow(ctx context.Context, modelName string) (api.ShowRes
 		return api.ShowResponse{}, fmt.Errorf("ollama: read /api/show response: %w", err)
 	}
 	if res.StatusCode >= http.StatusBadRequest {
-		return api.ShowResponse{}, fmt.Errorf("ollama: /api/show failed with status %d: %s", res.StatusCode, bytes.TrimSpace(respBody))
+		return api.ShowResponse{}, mapError(res.StatusCode, respBody)
 	}
 
 	var show api.ShowResponse
