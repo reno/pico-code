@@ -3,8 +3,9 @@
 A small CLI AI agent written in Go. One agent loop, three LLM backends —
 [Anthropic](https://docs.anthropic.com/) (cloud), [Ollama](https://ollama.com/)
 (local), and any OpenAI-compatible `/chat/completions` endpoint — plus
-sandboxed filesystem tools (read, list, search, glob, edit, write-behind-a-flag),
-an allowlisted `run_command`, and optional MCP servers for anything beyond that.
+sandboxed filesystem tools (read, list, search, glob always on; write and
+edit behind a flag), an allowlisted `run_command`, and optional MCP servers
+for anything beyond that.
 
 ## Install
 
