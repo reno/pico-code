@@ -9,7 +9,10 @@ before:
 builds:
   - id: pico
     main: ./cmd/pico
-    binary: pico
+    # Released artifacts ship as pico-code: Homebrew can only link a binary
+    # under the name it has inside the archive, and linking it as "pico"
+    # shadows nano's Pine-compatibility alias at /usr/bin/pico.
+    binary: pico-code
     env:
       - CGO_ENABLED=0
     goos:
@@ -46,7 +49,9 @@ release:
     name: pico-code
 
 homebrew_casks:
-  - name: pico
+  - name: pico-code
+    binaries:
+      - pico-code
     repository:
       owner: reno
       name: homebrew-tap

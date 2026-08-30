@@ -83,7 +83,7 @@ curl -fsSL "$base_url/checksums.txt" -o "$tmp_dir/checksums.txt"
 	fi
 )
 
-tar -xzf "$tmp_dir/$archive" -C "$tmp_dir" pico
+tar -xzf "$tmp_dir/$archive" -C "$tmp_dir" pico-code
 
 bin_name=${BIN_NAME:-pico}
 
@@ -95,7 +95,7 @@ if [ ! -w "$install_dir" ] 2>/dev/null; then
 	mkdir -p "$install_dir"
 fi
 
-install -m 755 "$tmp_dir/pico" "$install_dir/$bin_name"
+install -m 755 "$tmp_dir/pico-code" "$install_dir/$bin_name"
 echo "Installed $("$install_dir/$bin_name" --version) to $install_dir/$bin_name"
 
 if [ -n "$existing_pico" ] && [ "$existing_pico" != "$install_dir/$bin_name" ]; then
