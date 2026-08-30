@@ -271,6 +271,13 @@ func buildRegistry(cfg *config.Config) (*tools.Registry, error) {
 	if err := registry.Register(searchTool); err != nil {
 		return nil, err
 	}
+	globTool, err := tools.NewGlobFilesTool(sandbox)
+	if err != nil {
+		return nil, err
+	}
+	if err := registry.Register(globTool); err != nil {
+		return nil, err
+	}
 	if cfg.AllowWrite {
 		writeTool, err := tools.NewWriteFileTool(sandbox)
 		if err != nil {
@@ -304,7 +311,7 @@ func buildRegistry(cfg *config.Config) (*tools.Registry, error) {
 // sub-agent runs under agent.AutoApprove (there's no clean way to surface an
 // approval prompt from inside a nested tool call), so including either here
 // would silently bypass CLAUDE.md's approval-per-call rule.
-var subAgentToolNames = []string{"read_file", "list_dir", "search_files"}
+var subAgentToolNames = []string{"read_file", "list_dir", "search_files", "glob_files"}
 
 // wireSubAgent registers a sub_agent tool into registry once ag exists,
 // giving it the same provider and a restricted, read-only tool set so a
