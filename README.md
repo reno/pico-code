@@ -19,6 +19,15 @@ into `/usr/local/bin` (or `~/.local/bin` if that isn't writable) — no Go
 required. Windows isn't supported yet: command timeouts rely on POSIX
 process groups.
 
+Many systems already have a `pico` — usually nano's Pine-compatibility alias
+at `/usr/bin/pico`. Set `BIN_NAME` to install under a different command name
+and keep both, and `INSTALL_DIR` to choose where it lands:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/reno/pico-code/main/install.sh \
+  | BIN_NAME=pico-code INSTALL_DIR=~/.local/bin sh
+```
+
 Or via Homebrew (macOS/Linux):
 
 ```bash
