@@ -37,10 +37,28 @@ esac
 
 version=${VERSION:-}
 if [ -z "$version" ]; then
-	version=$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" |
-		grep '"tag_name"' | head -1 | cut -d '"' -f 4)
+	# -f is deliberately absent: on a non-2xx we want the status code and body
+	# to tell the user *why* there is no tag, not an empty string.
+	response=$(curl -sSL -w '\n%{http_code}' "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null || true)
+	status=$(printf '%s\n' "$response" | tail -1)
+	version=$(printf '%s\n' "$response" | grep '"tag_name"' | head -1 | cut -d '"' -f 4)
 	if [ -z "$version" ]; then
-		echo "error: could not resolve the latest release tag" >&2
+		case "$status" in
+			404)
+				echo "error: $repo has no published releases yet, so there is no binary to download" >&2
+				echo "       build from source instead: go install github.com/$repo/cmd/pico@latest" >&2
+				;;
+			403 | 429)
+				echo "error: GitHub API rate limit hit while looking up the latest release" >&2
+				echo "       retry later, or pin a known tag: VERSION=v0.2.0 sh install.sh" >&2
+				;;
+			000 | "")
+				echo "error: could not reach the GitHub API — check your network connection" >&2
+				;;
+			*)
+				echo "error: could not resolve the latest release tag (GitHub API returned HTTP $status)" >&2
+				;;
+		esac
 		exit 1
 	fi
 fi
